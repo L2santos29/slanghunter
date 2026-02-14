@@ -12,8 +12,27 @@
 
 ---
 
+### ⚡ See It In Action — 30 Seconds
+
+```bash
+git clone https://github.com/<your-username>/slanghunter.git
+cd slanghunter && pip install -r requirements.txt
+python demo.py
+```
+
+```
+  📥 INPUT    → Rolex Submariner 1:1 replica, AAA quality... $175
+  ⚙️ PROCESS  → 🔑 10 keywords · 🧬 5 patterns · 💲 ⚠ suspicious range
+  🔴 VERDICT  → 🚫 BLOCKED · Score: 100% · 16 flags · Law: 18 U.S.C. § 2320
+```
+
+> 4 mock Mercari listings → 3 crime categories → explainable verdicts with legal citations.
+
+---
+
 ## 📋 Table of Contents
 
+- [See It In Action](#-see-it-in-action--30-seconds)
 - [The Problem](#the-problem)
 - [The Solution](#the-solution)
 - [How It Works](#how-it-works)
@@ -96,42 +115,21 @@ Raw Listing ──▶ _normalize_text() ──▶ _scan_keywords() ──▶ _sc
 
 ## Quick Start
 
-### Prerequisites
-
-- **Python 3.10+** (uses `X | Y` union type syntax)
-- **Git**
-
-### Installation
-
 ```bash
-# Clone the repository
+# 1. Clone & install (30 seconds)
 git clone https://github.com/<your-username>/slanghunter.git
 cd slanghunter
-
-# Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate   # Linux/macOS
-# venv\Scripts\activate    # Windows
-
-# Install development dependencies
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-```
 
-### Run the Demo
-
-```bash
-# Full Mercari feed simulation (4 cases, visual dashboard)
+# 2. Run the demo — this is the star of the show ⭐
 python demo.py
 
-# Quick 8-case CLI demo
-python -m src
-```
-
-### Run the Tests
-
-```bash
+# 3. Run 90 tests across 15 test classes
 pytest tests/ -v
 ```
+
+> **Requirements:** Python 3.10+ · Git
 
 ## Usage Examples
 
@@ -304,29 +302,54 @@ If Mexico updates its money-laundering statute tomorrow, you change one string i
 
 ## Demo Output
 
-Run `python demo.py` to launch the full Mercari feed simulation:
+Run `python demo.py` to launch the full Mercari feed simulation.  Each listing flows through **three auditor-grade phases**:
+
+### Phase 1 — 📥 INPUT (what the moderator sees)
 
 ```
-╔══════════════════════════════════════════════════════════════╗
-║          🏪  MERCARI LISTING FEED — LIVE SIMULATION           ║
-║                Powered by SlangHunter v0.1.0                 ║
-╚══════════════════════════════════════════════════════════════╝
-
-  ⏳ Initializing SlangHunter engine... done.
-  📚 Knowledge base loaded: 3 categories, 109 keywords, 22 patterns.
-  📨 Incoming feed: 4 listings queued.
+  ┌─ 📥 INPUT ──────────────────────────────────────────────┐
+  │  Title:      Herbal Supplement Pack 🍃💨                   │
+  │  Seller:     rxplug_verified                              │
+  │  Category:   Health & Wellness                            │
+  │  Price:      $35.00                                       │
+  │                                                           │
+  │  Description:                                             │
+  │    Premium p3rcs and lean combo 💊 real pharma scripts...   │
+  └───────────────────────────────────────────────────────────┘
 ```
 
-Four carefully designed cases cover 100 % of the business logic:
+### Phase 2 — ⚙️ PROCESSING (step-by-step engine pipeline)
+
+```
+  ├─ 🔤 Normalizing text ······· lowercase + collapse whitespace
+  ├─ 🔑 Scanning 109 keywords ··························· 4 hits
+  ├─ 🧬 Matching 22 regex patterns ······················ 3 hits
+  ├─ 💲 Checking price context ($35.00) ·· ⚠ in suspicious range
+  ├─ 📊 Calculating risk score ···························· 100%
+```
+
+### Phase 3 — VERDICT (the decision)
+
+```
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    🔴  VERDICT: 🚫 BLOCKED
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Risk Score : [██████████████████████████████] 100%
+    Flags      : 8 indicators  ·  Categories: DRUGS
+    📜 Legal basis: 21 U.S.C. § 841 — Controlled Substances Act
+    👉 ACTION: AUTOMATIC BLOCK — Escalate to Legal
+```
+
+### Dashboard Summary
 
 | # | Case | Listing ID | Verdict | Categories |
 |---|---|---|---|---|
-| 1 | Control — Legitimate product | MER-2026-00417 | 🟢 SAFE (0 %) | — |
-| 2 | Slang — Drug trafficking | MER-2026-01893 | 🔴 CRITICAL (100 %) | DRUGS |
-| 3 | Anomaly — Money laundering | MER-2026-03201 | 🔴 CRITICAL (100 %) | MONEY_LAUNDERING |
-| 4 | Fraud — Surikae counterfeit | MER-2026-05742 | 🔴 CRITICAL (100 %) | SURIKAE |
+| 1 | Control — Legitimate product | MER-2026-00417 | 🟢 SAFE · ✅ APPROVED (0 %) | — |
+| 2 | Slang — Drug trafficking | MER-2026-01893 | 🔴 CRITICAL · 🚫 BLOCKED (100 %) | DRUGS |
+| 3 | Anomaly — Money laundering | MER-2026-03201 | 🔴 CRITICAL · 🚫 BLOCKED (100 %) | MONEY_LAUNDERING |
+| 4 | Fraud — Surikae counterfeit | MER-2026-05742 | 🔴 CRITICAL · 🚫 BLOCKED (100 %) | SURIKAE |
 
-Alternatively, run `python -m src` for a quick 8-case CLI demo.
+> Also available: `python -m src` for a quick 8-case CLI demo without the 3-phase animation.
 
 ## Roadmap
 
