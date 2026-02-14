@@ -1,0 +1,1 @@
+"""SlangHunter test suite."""
