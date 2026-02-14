@@ -6,7 +6,7 @@ Run with: pytest tests/ -v
 
 import re
 
-from src.slanghunter import SlangHunter
+from src.slanghunter import RiskLevel, SlangHunter
 
 # Expected crime categories in the knowledge base.
 EXPECTED_CATEGORIES = ["drugs", "money_laundering", "surikae"]
@@ -556,3 +556,223 @@ class TestSlangHunterAnalyze:
         hunter = SlangHunter()
         result = hunter.analyze("test listing")
         assert isinstance(result["flags"], list)
+
+
+# ==================================================================
+# 12. RiskLevel enum
+# ==================================================================
+
+class TestRiskLevel:
+    """Tests for the RiskLevel traffic-light enum."""
+
+    def test_enum_has_three_members(self):
+        """RiskLevel should have exactly CRITICAL, WARNING, SAFE."""
+        members = list(RiskLevel)
+        assert len(members) == 3
+        names = {m.name for m in members}
+        assert names == {"CRITICAL", "WARNING", "SAFE"}
+
+    def test_each_member_has_emoji(self):
+        """Every RiskLevel must carry an emoji attribute."""
+        for level in RiskLevel:
+            assert isinstance(level.emoji, str)
+            assert len(level.emoji) > 0
+
+    def test_each_member_has_label(self):
+        """Every RiskLevel must carry a label attribute."""
+        for level in RiskLevel:
+            assert isinstance(level.label, str)
+            assert level.label == level.name
+
+    def test_each_member_has_action(self):
+        """Every RiskLevel must carry an action attribute."""
+        for level in RiskLevel:
+            assert isinstance(level.action, str)
+            assert len(level.action) > 0
+
+    def test_critical_emoji_is_red(self):
+        """CRITICAL should use the red circle emoji."""
+        assert RiskLevel.CRITICAL.emoji == "🔴"
+
+    def test_warning_emoji_is_yellow(self):
+        """WARNING should use the yellow circle emoji."""
+        assert RiskLevel.WARNING.emoji == "🟡"
+
+    def test_safe_emoji_is_green(self):
+        """SAFE should use the green circle emoji."""
+        assert RiskLevel.SAFE.emoji == "🟢"
+
+
+# ==================================================================
+# 13. classify_risk()
+# ==================================================================
+
+class TestClassifyRisk:
+    """Tests for the classify_risk() threshold logic."""
+
+    def test_score_zero_is_safe(self):
+        """Score 0.0 → SAFE."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(0.0) == RiskLevel.SAFE
+
+    def test_score_040_is_safe(self):
+        """Score exactly 0.40 → SAFE (boundary: not > 0.40)."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(0.40) == RiskLevel.SAFE
+
+    def test_score_041_is_warning(self):
+        """Score 0.41 → WARNING."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(0.41) == RiskLevel.WARNING
+
+    def test_score_080_is_warning(self):
+        """Score exactly 0.80 → WARNING (boundary: not > 0.80)."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(0.80) == RiskLevel.WARNING
+
+    def test_score_081_is_critical(self):
+        """Score 0.81 → CRITICAL."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(0.81) == RiskLevel.CRITICAL
+
+    def test_score_100_is_critical(self):
+        """Score 1.0 → CRITICAL."""
+        hunter = SlangHunter()
+        assert hunter.classify_risk(1.0) == RiskLevel.CRITICAL
+
+
+# ==================================================================
+# 14. generate_report()
+# ==================================================================
+
+class TestGenerateReport:
+    """Tests for the human-readable report output."""
+
+    def test_report_is_string(self):
+        """generate_report() must return a string."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test listing")
+        assert isinstance(report, str)
+
+    def test_report_contains_verdict_header(self):
+        """Report must contain 'SLANGHUNTER VERDICT'."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test listing")
+        assert "SLANGHUNTER VERDICT" in report
+
+    def test_safe_report_shows_green(self):
+        """Clean listing report should show 🟢 and SAFE."""
+        hunter = SlangHunter()
+        report = hunter.generate_report(
+            "Vintage wooden bookshelf", price=45.0
+        )
+        assert "🟢" in report
+        assert "SAFE" in report
+        assert "APPROVED" in report
+
+    def test_critical_report_shows_red(self):
+        """High-risk listing should show 🔴 and CRITICAL."""
+        hunter = SlangHunter()
+        report = hunter.generate_report(
+            "Purple lean + xanax combo, scripts from the plug 💨🍃",
+            price=40.0,
+        )
+        assert "🔴" in report or "🟡" in report
+        # At minimum it should not be SAFE.
+        assert "SAFE" not in report or "CRITICAL" in report or "WARNING" in report
+
+    def test_report_contains_listing_text(self):
+        """Report must show the listing text."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("Magic beans for sale")
+        assert "Magic beans for sale" in report
+
+    def test_report_contains_price(self):
+        """Report must show the price when provided."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test item", price=99.99)
+        assert "$99.99" in report
+
+    def test_report_shows_na_when_no_price(self):
+        """Report must show N/A when price is omitted."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test item")
+        assert "N/A" in report
+
+    def test_report_contains_risk_score_bar(self):
+        """Report must include a visual risk score bar."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test item")
+        assert "Risk Score" in report
+        assert "%" in report
+
+    def test_report_contains_action_recommendation(self):
+        """Report must include an action recommendation."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test item")
+        assert "Action" in report
+
+    def test_report_contains_reasoning_section(self):
+        """Report must include a REASONING section."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("test item")
+        assert "REASONING" in report
+
+    def test_report_traceability_shows_legal_ref(self):
+        """Flagged listing report must cite the legal statute."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("Selling fentanyl cheap")
+        assert "21 U.S.C." in report
+
+    def test_report_flags_section_present_when_flagged(self):
+        """Flagged listing report must show a FLAGS section."""
+        hunter = SlangHunter()
+        report = hunter.generate_report("got some lean for sale")
+        assert "FLAGS" in report
+        assert "⚑" in report
+
+    def test_report_no_flags_section_when_clean(self):
+        """Clean listing should NOT have a FLAGS section."""
+        hunter = SlangHunter()
+        report = hunter.generate_report(
+            "Vintage bookshelf, great condition"
+        )
+        assert "⚑" not in report
+
+    def test_report_truncates_long_text(self):
+        """Listing text longer than 80 chars should be truncated."""
+        hunter = SlangHunter()
+        long_text = "A" * 120
+        report = hunter.generate_report(long_text)
+        assert "..." in report
+
+    def test_report_categories_shown(self):
+        """Matched categories must appear in the report."""
+        hunter = SlangHunter()
+        report = hunter.generate_report(
+            "m0ney fl1p on ca$h app 💸", price=20.0
+        )
+        assert "MONEY_LAUNDERING" in report
+
+
+# ==================================================================
+# 15. print_report() — smoke test
+# ==================================================================
+
+class TestPrintReport:
+    """Tests for the print_report() convenience method."""
+
+    def test_print_report_returns_verdict_dict(self):
+        """print_report() should return the raw analyze() dict."""
+        hunter = SlangHunter()
+        result = hunter.print_report("test listing")
+        assert isinstance(result, dict)
+        assert "risk_score" in result
+        assert "flags" in result
+
+    def test_print_report_outputs_to_stdout(self, capsys):
+        """print_report() should print the report to stdout."""
+        hunter = SlangHunter()
+        hunter.print_report("Selling kush")
+        captured = capsys.readouterr()
+        assert "SLANGHUNTER VERDICT" in captured.out

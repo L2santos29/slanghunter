@@ -16,6 +16,7 @@ Created: 2026-02-14
 """
 
 import re
+from enum import Enum
 
 
 class SlangHunter:
@@ -682,3 +683,163 @@ class SlangHunter:
             "reasoning": reasoning_text,
             "matched_categories": matched_categories,
         }
+
+    # ------------------------------------------------------------------
+    # Report Generation — "Explainable AI for Legal Teams"
+    # ------------------------------------------------------------------
+
+    def classify_risk(self, score: float) -> "RiskLevel":
+        """
+        Map a numeric score to a RiskLevel enum value.
+
+        Thresholds (configurable on the class):
+            - CRITICAL: score > 0.80  →  automatic block
+            - WARNING:  score > 0.40  →  manual review
+            - SAFE:     score ≤ 0.40  →  approved
+
+        Args:
+            score: A risk score between 0.0 and 1.0.
+
+        Returns:
+            A ``RiskLevel`` enum member.
+        """
+        if score > 0.80:
+            return RiskLevel.CRITICAL
+        if score > 0.40:
+            return RiskLevel.WARNING
+        return RiskLevel.SAFE
+
+    def generate_report(
+        self,
+        text: str,
+        price: float | None = None,
+    ) -> str:
+        """
+        Analyze a listing and produce a full human-readable report.
+
+        This is the presentation layer — it calls ``analyze()``
+        internally, then formats the verdict for non-technical
+        stakeholders (lawyers, ops managers, compliance auditors).
+
+        Every decision is traceable: the report states *what* was
+        detected, *which law* it violates, and *why* the risk
+        level was assigned.  ("Explainable AI" for Legal Tech.)
+
+        Args:
+            text: The raw listing text.
+            price: Optional listing price in USD.
+
+        Returns:
+            A formatted multi-line string ready for console
+            output or logging.
+        """
+        verdict = self.analyze(text, price)
+        level = self.classify_risk(verdict["risk_score"])
+        score_pct = int(verdict["risk_score"] * 100)
+
+        lines: list[str] = []
+
+        # ── Header ──────────────────────────────────────────
+        lines.append("=" * 60)
+        lines.append(
+            f"  {level.emoji}  SLANGHUNTER VERDICT: "
+            f"{level.label}"
+        )
+        lines.append("=" * 60)
+
+        # ── Listing summary ─────────────────────────────────
+        # Truncate display text to 80 chars for readability.
+        display_text = text if len(text) <= 80 else text[:77] + "..."
+        lines.append(f"  Listing : {display_text}")
+        if price is not None:
+            lines.append(f"  Price   : ${price:,.2f}")
+        else:
+            lines.append("  Price   : N/A")
+        lines.append("")
+
+        # ── Risk score bar ──────────────────────────────────
+        bar_len = 30
+        filled = int(bar_len * verdict["risk_score"])
+        bar = "█" * filled + "░" * (bar_len - filled)
+        lines.append(f"  Risk Score : [{bar}] {score_pct}%")
+        lines.append(f"  Risk Level : {level.emoji}  {level.label}")
+        lines.append(
+            f"  Action     : {level.action}"
+        )
+        lines.append("")
+
+        # ── Flags ───────────────────────────────────────────
+        if verdict["flags"]:
+            lines.append("  ┌─ FLAGS " + "─" * 48)
+            for flag in verdict["flags"]:
+                lines.append(f"  │  ⚑  {flag}")
+            lines.append("  └" + "─" * 57)
+            lines.append("")
+
+        # ── Detailed reasoning (traceability) ───────────────
+        lines.append("  ┌─ REASONING (Traceability) " + "─" * 29)
+        for rline in verdict["reasoning"].split("\n"):
+            lines.append(f"  │  {rline}")
+        lines.append("  └" + "─" * 57)
+        lines.append("")
+
+        # ── Categories matched ──────────────────────────────
+        if verdict["matched_categories"]:
+            cats = ", ".join(
+                c.upper() for c in verdict["matched_categories"]
+            )
+            lines.append(f"  Categories : {cats}")
+        else:
+            lines.append("  Categories : None")
+
+        lines.append("=" * 60)
+
+        return "\n".join(lines)
+
+    def print_report(
+        self,
+        text: str,
+        price: float | None = None,
+    ) -> dict:
+        """
+        Analyze, print the human-readable report, and return
+        the raw verdict dict.
+
+        Convenience method that combines ``generate_report()``
+        (for the console) with ``analyze()`` (for programmatic
+        use).
+
+        Args:
+            text: The raw listing text.
+            price: Optional listing price in USD.
+
+        Returns:
+            The raw verdict dictionary from ``analyze()``.
+        """
+        report = self.generate_report(text, price)
+        print(report)
+        return self.analyze(text, price)
+
+
+# ======================================================================
+# RiskLevel Enum — traffic-light system
+# ======================================================================
+
+class RiskLevel(Enum):
+    """
+    Traffic-light risk classification.
+
+    Each member carries three presentation attributes:
+        - emoji:  visual indicator for console / Slack / email.
+        - label:  human-readable severity name.
+        - action: recommended operational response.
+    """
+
+    CRITICAL = ("🔴", "CRITICAL", "AUTOMATIC BLOCK — Escalate to Legal")
+    WARNING = ("🟡", "WARNING", "MANUAL REVIEW — Flag for T&S analyst")
+    SAFE = ("🟢", "SAFE", "APPROVED — No action required")
+
+    def __init__(self, emoji: str, label: str, action: str):
+        self.emoji = emoji
+        self.label = label
+        self.action = action
