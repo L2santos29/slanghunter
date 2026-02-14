@@ -120,6 +120,10 @@ pip install -r requirements.txt
 ### Run the Demo
 
 ```bash
+# Full Mercari feed simulation (4 cases, visual dashboard)
+python demo.py
+
+# Quick 8-case CLI demo
 python -m src
 ```
 
@@ -213,6 +217,7 @@ print(verdict["risk_score"])  # 0.0  — price alone never triggers a flag
 ```
 slanghunter/
 │
+├── demo.py                    # 🌟 Live Mercari feed simulation (python demo.py)
 ├── src/
 │   ├── __init__.py            # Package metadata & exports
 │   ├── __main__.py            # CLI demo entry point (python -m src)
@@ -299,23 +304,29 @@ If Mexico updates its money-laundering statute tomorrow, you change one string i
 
 ## Demo Output
 
-Run `python -m src` to see all 8 curated test cases:
+Run `python demo.py` to launch the full Mercari feed simulation:
 
 ```
-╔══════════════════════════════════════════════════════════╗
-║      🔍 SLANGHUNTER — Semantic Risk Detection Demo      ║
-║          Trust & Safety Automation Prototype             ║
-╚══════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║          🏪  MERCARI LISTING FEED — LIVE SIMULATION           ║
+║                Powered by SlangHunter v0.1.0                 ║
+╚══════════════════════════════════════════════════════════════╝
 
-  ▸ Demo Case #1: Clean listing — ordinary product         → 🟢 SAFE
-  ▸ Demo Case #2: Clean listing — normal electronics       → 🟢 SAFE
-  ▸ Demo Case #3: Drug slang evasion — 'p3rcs' (Percocet) → 🟡 WARNING
-  ▸ Demo Case #4: Counterfeit sneakers — surikae           → 🔴 CRITICAL
-  ▸ Demo Case #5: Drug trafficking — multi-keyword + price → 🔴 CRITICAL
-  ▸ Demo Case #6: Money laundering — flip + gift cards     → 🔴 CRITICAL
-  ▸ Demo Case #7: Multi-category — drugs + money laundering→ 🔴 CRITICAL
-  ▸ Demo Case #8: Surikae — counterfeit luxury goods       → 🔴 CRITICAL
+  ⏳ Initializing SlangHunter engine... done.
+  📚 Knowledge base loaded: 3 categories, 109 keywords, 22 patterns.
+  📨 Incoming feed: 4 listings queued.
 ```
+
+Four carefully designed cases cover 100 % of the business logic:
+
+| # | Case | Listing ID | Verdict | Categories |
+|---|---|---|---|---|
+| 1 | Control — Legitimate product | MER-2026-00417 | 🟢 SAFE (0 %) | — |
+| 2 | Slang — Drug trafficking | MER-2026-01893 | 🔴 CRITICAL (100 %) | DRUGS |
+| 3 | Anomaly — Money laundering | MER-2026-03201 | 🔴 CRITICAL (100 %) | MONEY_LAUNDERING |
+| 4 | Fraud — Surikae counterfeit | MER-2026-05742 | 🔴 CRITICAL (100 %) | SURIKAE |
+
+Alternatively, run `python -m src` for a quick 8-case CLI demo.
 
 ## Roadmap
 
@@ -324,6 +335,7 @@ Run `python -m src` to see all 8 curated test cases:
 - [x] **Phase 3** — Inference engine (normalize → scan → score → verdict)
 - [x] **Phase 4** — Report interface & traffic-light system
 - [x] **Phase 5** — Documentation, narrative & portfolio polish
+- [x] **Phase 5.5** — Live simulation demo (`demo.py`) & repo update
 - [ ] **Phase 6** — REST API wrapper (FastAPI + Pydantic models)
 - [ ] **Phase 7** — Batch processing & CSV/JSON ingestion
 - [ ] **Phase 8** — Dashboard & analytics module
