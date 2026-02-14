@@ -128,13 +128,29 @@ MOCK_FEED: list[dict] = [
 
 
 # ═══════════════════════════════════════════════════════════════
-#  DISPLAY HELPERS — make the console output shine
+#  DISPLAY HELPERS — Auditor-grade console UX
 # ═══════════════════════════════════════════════════════════════
+#
+#  Each listing flows through three visual phases:
+#
+#      ┌─ INPUT ─────────────────────────────────────┐
+#      │  Title, Description, Price                  │
+#      └─────────────────────────────────────────────┘
+#               ▼
+#      ┌─ PROCESSING ────────────────────────────────┐
+#      │  Step-by-step engine pipeline animation     │
+#      └─────────────────────────────────────────────┘
+#               ▼
+#      ┌─ VERDICT ───────────────────────────────────┐
+#      │  🔴 BLOCKED / 🟡 REVIEW / 🟢 APPROVED      │
+#      └─────────────────────────────────────────────┘
+#
 
 # Terminal widths and dividers.
 W = 64
 THIN = "─" * W
-DOUBLE = "═" * W
+HEAVY = "━" * W
+BOX_INNER = W - 6  # usable chars inside │ ... │
 
 
 def banner() -> None:
@@ -162,7 +178,7 @@ def section(title: str) -> None:
     print(THIN)
 
 
-def typing_effect(text: str, delay: float = 0.01) -> None:
+def typing_effect(text: str, delay: float = 0.008) -> None:
     """Simulate character-by-character output for drama."""
     for ch in text:
         sys.stdout.write(ch)
@@ -171,50 +187,164 @@ def typing_effect(text: str, delay: float = 0.01) -> None:
     print()
 
 
-def listing_card(data: dict) -> None:
-    """Print a simulated marketplace listing card."""
-    print(f"  ┌{'─' * (W - 4)}┐")
-    print(f"  │ {'ID:':<10}{data['listing_id']:<{W - 16}}│")
-    print(f"  │ {'Seller:':<10}{data['seller']:<{W - 16}}│")
+def step(icon: str, message: str, result: str = "",
+         delay: float = 0.12) -> None:
+    """Print an animated processing step.
 
-    # Title may need wrapping.
-    title = data["title"]
-    print(f"  │ {'Title:':<10}{title[:W - 16]:<{W - 16}}│")
+    Renders as:  ``  ├─ 🔤 Message ··········· result``
 
-    # Price line.
-    price_str = f"${data['price']:,.2f}"
-    print(f"  │ {'Price:':<10}{price_str:<{W - 16}}│")
-    print(f"  │ {'Category:':<10}{data['category']:<{W - 16}}│")
-    print(f"  │{' ' * (W - 4)}│")
+    Args:
+        icon: A single emoji for the step.
+        message: What the engine is doing.
+        result: Short outcome (e.g. "3 found", "in range").
+        delay: Pause after printing (simulates work).
+    """
+    prefix = f"  ├─ {icon} {message} "
+    dots = "·" * max(1, W - len(prefix) - len(result) - 2)
+    typing_effect(f"{prefix}{dots} {result}", delay=0.005)
+    time.sleep(delay)
 
-    # Description — word-wrap to fit the card.
-    desc = data["description"]
-    max_line = W - 8
-    words = desc.split()
-    line = ""
+
+def word_wrap(text: str, width: int) -> list[str]:
+    """Break *text* into lines that fit within *width* chars."""
+    words = text.split()
+    lines: list[str] = []
+    current = ""
     for word in words:
-        if len(line) + len(word) + 1 <= max_line:
-            line = f"{line} {word}" if line else word
+        if current and len(current) + len(word) + 1 > width:
+            lines.append(current)
+            current = word
         else:
-            print(f"  │  {line:<{W - 6}}│")
-            line = word
-    if line:
-        print(f"  │  {line:<{W - 6}}│")
+            current = f"{current} {word}" if current else word
+    if current:
+        lines.append(current)
+    return lines
 
+
+# ── PHASE 1 — INPUT ─────────────────────────────────────────
+
+def phase_input(data: dict) -> None:
+    """Render the INPUT phase: show what the auditor is reviewing.
+
+    Displays the raw listing exactly as a marketplace moderator
+    would see it — title, seller, category, price, and the full
+    description wrapped inside a visual card.
+    """
+    print()
+    print(f"  ┌─ 📥 INPUT {'─' * (W - 16)}┐")
+    print(f"  │{'':<{W - 4}}│")
+    print(f"  │  {'Title:':<12}"
+          f"{data['title'][:BOX_INNER - 12]:<{BOX_INNER - 12}}│")
+    print(f"  │  {'Seller:':<12}"
+          f"{data['seller']:<{BOX_INNER - 12}}│")
+    print(f"  │  {'Category:':<12}"
+          f"{data['category']:<{BOX_INNER - 12}}│")
+    price_str = f"${data['price']:,.2f}"
+    print(f"  │  {'Price:':<12}"
+          f"{price_str:<{BOX_INNER - 12}}│")
+    print(f"  │{'':<{W - 4}}│")
+
+    # Description — word-wrap inside the card.
+    print(f"  │  {'Description:':<{BOX_INNER}}│")
+    for ln in word_wrap(data["description"], BOX_INNER - 2):
+        print(f"  │    {ln:<{BOX_INNER - 2}}│")
+
+    print(f"  │{'':<{W - 4}}│")
     print(f"  └{'─' * (W - 4)}┘")
+    print()
 
 
-def result_summary(
-    case_num: int,
+# ── PHASE 2 — PROCESSING ────────────────────────────────────
+
+def phase_processing(
     data: dict,
+    verdict: dict,
+    hunter: SlangHunter,
+) -> None:
+    """Render the PROCESSING phase: animated engine pipeline.
+
+    Shows each internal step the engine performed, with counts
+    extracted from the already-computed *verdict* dict.  The
+    animation is cosmetic — analysis was already done — but it
+    gives the auditor a step-by-step understanding of *how* the
+    engine reached its conclusion.
+    """
+    # Parse verdict flags to count kw / pat / price per category.
+    kw_flags = [f for f in verdict["flags"] if ":kw:" in f]
+    pat_flags = [f for f in verdict["flags"] if ":pat:" in f]
+    price_flags = [f for f in verdict["flags"]
+                   if f.endswith(":price_context")]
+
+    # Get totals from the knowledge base.
+    cats = hunter.get_categories()
+    total_kw = sum(
+        hunter.get_category_info(c)["keyword_count"] for c in cats
+    )
+    total_pat = sum(
+        hunter.get_category_info(c)["pattern_count"] for c in cats
+    )
+
+    print(f"  ┌─ ⚙️  PROCESSING {'─' * (W - 20)}┐")
+    print(f"  │{'':<{W - 4}}│")
+
+    # Step 1: Normalize.
+    step("🔤", "Normalizing text",
+         "lowercase + collapse whitespace")
+
+    # Step 2: Keyword scan.
+    kw_result = (
+        f"{len(kw_flags)} hit{'s' if len(kw_flags) != 1 else ''}"
+        if kw_flags else "clean"
+    )
+    step("🔑", f"Scanning {total_kw} keywords",
+         kw_result)
+
+    # Step 3: Pattern scan.
+    pat_result = (
+        f"{len(pat_flags)} hit{'s' if len(pat_flags) != 1 else ''}"
+        if pat_flags else "clean"
+    )
+    step("🧬", f"Matching {total_pat} regex patterns",
+         pat_result)
+
+    # Step 4: Price context.
+    price_str = f"${data['price']:,.2f}"
+    price_result = (
+        "⚠ in suspicious range" if price_flags
+        else "✓ normal"
+    )
+    step("💲", f"Checking price context ({price_str})",
+         price_result)
+
+    # Step 5: Score.
+    score_pct = int(verdict["risk_score"] * 100)
+    step("📊", "Calculating risk score",
+         f"{score_pct}%")
+
+    print(f"  │{'':<{W - 4}}│")
+    print(f"  └{'─' * (W - 4)}┘")
+    print()
+
+
+# ── PHASE 3 — VERDICT ───────────────────────────────────────
+
+def phase_verdict(
     verdict: dict,
     level_emoji: str,
     level_label: str,
     level_action: str,
 ) -> None:
-    """Print a compact result summary line."""
+    """Render the VERDICT phase: the auditor's decision card.
+
+    A clean, scannable result showing:
+      - Traffic-light emoji + label
+      - Risk score bar
+      - Matched flags (if any)
+      - Legal reasoning (if any)
+      - Recommended action
+    """
     score_pct = int(verdict["risk_score"] * 100)
-    bar_len = 20
+    bar_len = 30
     filled = int(bar_len * verdict["risk_score"])
     bar = "█" * filled + "░" * (bar_len - filled)
     n_flags = len(verdict["flags"])
@@ -223,12 +353,47 @@ def result_summary(
         or "—"
     )
 
+    # Verdict header — strong visual break.
+    print(HEAVY)
+    if level_label == "CRITICAL":
+        verdict_word = "🚫 BLOCKED"
+    elif level_label == "WARNING":
+        verdict_word = "⚠️  REVIEW"
+    else:
+        verdict_word = "✅ APPROVED"
+    header = f"{level_emoji}  VERDICT: {verdict_word}"
+    print(f"  {header}")
+    print(HEAVY)
+
+    # Score bar.
+    print(f"  Risk Score : [{bar}] {score_pct}%")
+    print(f"  Risk Level : {level_emoji}  {level_label}")
+    print(f"  Flags      : {n_flags} indicator"
+          f"{'s' if n_flags != 1 else ''}")
+    print(f"  Categories : {cats}")
     print()
-    print(f"  {level_emoji}  VERDICT: {level_label}")
-    print(f"     Score    : [{bar}] {score_pct}%")
-    print(f"     Flags    : {n_flags} indicator{'s' if n_flags != 1 else ''}")
-    print(f"     Category : {cats}")
-    print(f"     Action   : {level_action}")
+
+    # Flags detail (if any).
+    if verdict["flags"]:
+        print(f"  ┌─ ⚑ FLAGS {'─' * (W - 15)}┐")
+        for flag in verdict["flags"]:
+            print(f"  │  ⚑  {flag:<{BOX_INNER - 3}}│")
+        print(f"  └{'─' * (W - 4)}┘")
+        print()
+
+    # Reasoning / traceability (if any).
+    reasoning_lines = verdict["reasoning"].split("\n")
+    print(f"  ┌─ 📜 REASONING {'─' * (W - 19)}┐")
+    for rline in reasoning_lines:
+        # Truncate very long reasoning lines.
+        display = rline[:BOX_INNER] if len(rline) > BOX_INNER else rline
+        print(f"  │  {display:<{BOX_INNER}}│")
+    print(f"  └{'─' * (W - 4)}┘")
+    print()
+
+    # Action recommendation — the bottom line.
+    print(f"  👉 ACTION: {level_action}")
+    print()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -251,7 +416,7 @@ def run_simulation() -> None:
 
     typing_effect(
         "  ⏳ Initializing SlangHunter engine... done.",
-        delay=0.015,
+        delay=0.012,
     )
     cats = hunter.get_categories()
     total_kw = 0
@@ -264,47 +429,40 @@ def run_simulation() -> None:
     typing_effect(
         f"  📚 Knowledge base loaded: {len(cats)} categories, "
         f"{total_kw} keywords, {total_pat} patterns.",
-        delay=0.015,
+        delay=0.012,
     )
     typing_effect(
         f"  📨 Incoming feed: {len(MOCK_FEED)} listings queued.\n",
-        delay=0.015,
+        delay=0.012,
     )
 
     time.sleep(0.3)
 
-    # ── Per-listing analysis ─────────────────────────────────
+    # ── Per-listing 3-phase pipeline ─────────────────────────
     verdicts: list[dict] = []
 
     for i, data in enumerate(MOCK_FEED):
         label = CASE_LABELS[i]
         section(f"📦  {label}")
-        print()
-
-        # Show the raw listing card.
-        listing_card(data)
-        print()
 
         # Build the full text the engine will see.
         full_text = f"{data['title']} {data['description']}"
 
-        typing_effect("  🔍 Scanning...", delay=0.02)
-        time.sleep(0.2)
-
-        # Run the engine.
+        # Run the engine FIRST (results drive the animation).
         verdict = hunter.analyze(full_text, data["price"])
         level = hunter.classify_risk(verdict["risk_score"])
 
-        result_summary(
-            i + 1, data, verdict,
+        # ── PHASE 1: INPUT ──────────────────────────────────
+        phase_input(data)
+
+        # ── PHASE 2: PROCESSING ─────────────────────────────
+        phase_processing(data, verdict, hunter)
+
+        # ── PHASE 3: VERDICT ────────────────────────────────
+        phase_verdict(
+            verdict,
             level.emoji, level.label, level.action,
         )
-
-        # Show the full detailed report.
-        print()
-        report = hunter.generate_report(full_text, data["price"])
-        print(report)
-        print()
 
         verdicts.append(
             {"data": data, "verdict": verdict, "level": level}
