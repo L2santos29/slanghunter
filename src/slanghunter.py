@@ -840,6 +840,13 @@ class RiskLevel(Enum):
     SAFE = ("🟢", "SAFE", "APPROVED — No action required")
 
     def __init__(self, emoji: str, label: str, action: str):
+        """Store the display attributes for this risk level.
+
+        Args:
+            emoji: Visual indicator (🔴, 🟡, or 🟢).
+            label: Human-readable severity label.
+            action: Recommended operational response.
+        """
         self.emoji = emoji
         self.label = label
         self.action = action
