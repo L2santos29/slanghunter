@@ -233,11 +233,303 @@ class TestPublicAPI:
 
 
 # ==================================================================
-# 5. Analyze contract (unchanged from Phase 1)
+# 5. Text normalization
+# ==================================================================
+
+class TestNormalizeText:
+    """Tests for the _normalize_text() private method."""
+
+    def test_lowercases_text(self):
+        """Text must be converted to lowercase."""
+        result = SlangHunter._normalize_text("SELLING CHEAP STUFF")
+        assert result == "selling cheap stuff"
+
+    def test_collapses_whitespace(self):
+        """Multiple spaces/tabs/newlines become a single space."""
+        result = SlangHunter._normalize_text("word1   word2\tword3\nword4")
+        assert result == "word1 word2 word3 word4"
+
+    def test_strips_edges(self):
+        """Leading and trailing whitespace is removed."""
+        result = SlangHunter._normalize_text("  hello world  ")
+        assert result == "hello world"
+
+    def test_preserves_special_chars(self):
+        """Special chars ($, @, emojis) must NOT be stripped."""
+        result = SlangHunter._normalize_text("ca$h @pp 🍃")
+        assert "$" in result
+        assert "@" in result
+        assert "🍃" in result
+
+    def test_empty_string(self):
+        """Empty input returns empty output."""
+        assert SlangHunter._normalize_text("") == ""
+
+
+# ==================================================================
+# 6. Keyword scanning
+# ==================================================================
+
+class TestKeywordScanning:
+    """Tests for _scan_keywords()."""
+
+    def test_finds_single_word_keyword(self):
+        """Should find a single-word keyword with word boundaries."""
+        hits = SlangHunter._scan_keywords(
+            "i have some kush for sale", ["kush", "lean"]
+        )
+        assert "kush" in hits
+        assert "lean" not in hits
+
+    def test_finds_multi_word_keyword(self):
+        """Should find multi-word phrases via substring match."""
+        hits = SlangHunter._scan_keywords(
+            "paying via cash app only", ["cash app", "zelle"]
+        )
+        assert "cash app" in hits
+        assert "zelle" not in hits
+
+    def test_no_false_positives_on_substrings(self):
+        """'ice' should NOT match 'price' or 'nice'."""
+        hits = SlangHunter._scan_keywords(
+            "great price on this nice item", ["ice"]
+        )
+        assert hits == []
+
+    def test_returns_empty_for_clean_text(self):
+        """Clean text should produce no keyword hits."""
+        hits = SlangHunter._scan_keywords(
+            "brand new bicycle for kids", ["kush", "meth"]
+        )
+        assert hits == []
+
+
+# ==================================================================
+# 7. Pattern scanning
+# ==================================================================
+
+class TestPatternScanning:
+    """Tests for _scan_patterns()."""
+
+    def test_returns_matched_strings(self):
+        """Matched text fragments should be returned."""
+        import re as _re
+        patterns = [_re.compile(r"p[3e]rc[s0]?", _re.IGNORECASE)]
+        hits = SlangHunter._scan_patterns("got p3rcs hmu", patterns)
+        assert len(hits) == 1
+        assert "p3rc" in hits[0]
+
+    def test_returns_empty_for_no_match(self):
+        """No matches should produce an empty list."""
+        import re as _re
+        patterns = [_re.compile(r"p[3e]rc[s0]?", _re.IGNORECASE)]
+        hits = SlangHunter._scan_patterns("selling a book", patterns)
+        assert hits == []
+
+
+# ==================================================================
+# 8. Price context
+# ==================================================================
+
+class TestPriceContext:
+    """Tests for _check_price_context()."""
+
+    def test_price_inside_range(self):
+        """Price inside [min, max] should return True."""
+        thr = {"min": 0.0, "max": 80.0, "description": "test"}
+        assert SlangHunter._check_price_context(50.0, thr) is True
+
+    def test_price_outside_range(self):
+        """Price above max should return False."""
+        thr = {"min": 0.0, "max": 80.0, "description": "test"}
+        assert SlangHunter._check_price_context(500.0, thr) is False
+
+    def test_price_none(self):
+        """None price should return False (no info = no context)."""
+        thr = {"min": 0.0, "max": 80.0, "description": "test"}
+        assert SlangHunter._check_price_context(None, thr) is False
+
+    def test_price_at_boundary(self):
+        """Price exactly at min or max should return True."""
+        thr = {"min": 30.0, "max": 250.0, "description": "test"}
+        assert SlangHunter._check_price_context(30.0, thr) is True
+        assert SlangHunter._check_price_context(250.0, thr) is True
+
+
+# ==================================================================
+# 9. Scoring system
+# ==================================================================
+
+class TestScoringSystem:
+    """Tests for _calculate_score()."""
+
+    def test_zero_score_for_no_hits(self):
+        """No hits = score 0.0."""
+        hunter = SlangHunter()
+        score = hunter._calculate_score([], [], False)
+        assert score == 0.0
+
+    def test_keywords_add_weight(self):
+        """Each keyword hit adds WEIGHT_KEYWORD to the score."""
+        hunter = SlangHunter()
+        score = hunter._calculate_score(["kush"], [], False)
+        assert score == hunter.WEIGHT_KEYWORD
+
+    def test_patterns_add_weight(self):
+        """Each pattern hit adds WEIGHT_PATTERN to the score."""
+        hunter = SlangHunter()
+        score = hunter._calculate_score([], ["p3rc"], False)
+        assert score == hunter.WEIGHT_PATTERN
+
+    def test_price_alone_scores_zero(self):
+        """Price match ALONE must NOT add score (amplifier only)."""
+        hunter = SlangHunter()
+        score = hunter._calculate_score([], [], True)
+        assert score == 0.0
+
+    def test_combo_bonus_when_text_and_price(self):
+        """Text + price evidence triggers price + combo bonus."""
+        hunter = SlangHunter()
+        score = hunter._calculate_score(["kush"], [], True)
+        expected = (
+            hunter.WEIGHT_KEYWORD
+            + hunter.WEIGHT_PRICE_CONTEXT
+            + hunter.WEIGHT_COMBO_BONUS
+        )
+        assert abs(score - expected) < 1e-9
+
+    def test_score_clamped_to_one(self):
+        """Score must never exceed 1.0 even with many hits."""
+        hunter = SlangHunter()
+        many_kw = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        many_pat = ["x", "y", "z", "w"]
+        score = hunter._calculate_score(many_kw, many_pat, True)
+        assert score == 1.0
+
+
+# ==================================================================
+# 10. Full analyze() — integration tests
+# ==================================================================
+
+class TestAnalyzeIntegration:
+    """End-to-end tests for analyze() with real listings."""
+
+    def test_clean_listing_scores_zero(self):
+        """A completely innocent listing should score 0.0."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "Vintage wooden bookshelf, great condition", price=45.0
+        )
+        assert result["risk_score"] == 0.0
+        assert result["flags"] == []
+        assert result["matched_categories"] == []
+
+    def test_drug_keyword_detected(self):
+        """A listing with a drug keyword should flag 'drugs'."""
+        hunter = SlangHunter()
+        result = hunter.analyze("Purple lean for sale, DM me")
+        assert result["risk_score"] > 0.0
+        assert "drugs" in result["matched_categories"]
+        assert any("drugs:kw:lean" in f for f in result["flags"])
+
+    def test_drug_slang_evasion_detected(self):
+        """Evasion text like 'p3rcs' should still be caught."""
+        hunter = SlangHunter()
+        result = hunter.analyze("got them p3rcs 💊 hmu")
+        assert result["risk_score"] > 0.0
+        assert "drugs" in result["matched_categories"]
+
+    def test_drug_with_price_context_scores_higher(self):
+        """Drug keyword + suspicious price should boost score."""
+        hunter = SlangHunter()
+        text_only = hunter.analyze("Selling some kush")
+        with_price = hunter.analyze("Selling some kush", price=25.0)
+        assert with_price["risk_score"] > text_only["risk_score"]
+        assert any(
+            "price_context" in f for f in with_price["flags"]
+        )
+
+    def test_money_laundering_detected(self):
+        """Money flip language should flag money_laundering."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "💸 Money flip! Turn $50 into $500 via Cash App 💰",
+            price=10.0,
+        )
+        assert "money_laundering" in result["matched_categories"]
+        assert result["risk_score"] > 0.3
+
+    def test_money_laundering_evasion_detected(self):
+        """'m0ney fl1p' evasion should still be caught."""
+        hunter = SlangHunter()
+        result = hunter.analyze("legit m0ney fl1p, dm me now")
+        assert "money_laundering" in result["matched_categories"]
+
+    def test_surikae_counterfeit_detected(self):
+        """Counterfeit listing should flag surikae."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "Jordan 1 Retro - 1:1 replica, comes in original box",
+            price=65.0,
+        )
+        assert "surikae" in result["matched_categories"]
+        assert result["risk_score"] > 0.3
+
+    def test_surikae_brand_evasion_detected(self):
+        """'gucci inspired' should trigger surikae."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "Beautiful gucci inspired handbag 👜 AAA quality"
+        )
+        assert "surikae" in result["matched_categories"]
+
+    def test_multi_category_listing(self):
+        """A listing hitting multiple categories should flag all."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "Selling p3rcs, also do m0ney fl1ps on ca$h app",
+            price=30.0,
+        )
+        assert "drugs" in result["matched_categories"]
+        assert "money_laundering" in result["matched_categories"]
+        assert result["risk_score"] > 0.4
+
+    def test_price_alone_not_enough_for_high_score(self):
+        """Suspicious price WITHOUT text evidence = low score."""
+        hunter = SlangHunter()
+        result = hunter.analyze(
+            "Used textbook for college class", price=25.0
+        )
+        # Price may match drug/ML thresholds but no text =
+        # only price_context weight, which is modest.
+        assert result["risk_score"] <= 0.2
+
+    def test_result_has_matched_categories_key(self):
+        """Verdict must include the new matched_categories key."""
+        hunter = SlangHunter()
+        result = hunter.analyze("test listing")
+        assert "matched_categories" in result
+        assert isinstance(result["matched_categories"], list)
+
+    def test_reasoning_contains_legal_reference(self):
+        """Reasoning for a flagged listing must cite the statute."""
+        hunter = SlangHunter()
+        result = hunter.analyze("Selling some fentanyl")
+        assert "21 U.S.C." in result["reasoning"]
+
+    def test_reasoning_clean_listing(self):
+        """Clean listing reasoning says no risk detected."""
+        hunter = SlangHunter()
+        result = hunter.analyze("Selling homemade cookies")
+        assert "No risk indicators detected" in result["reasoning"]
+
+
+# ==================================================================
+# 11. Analyze contract (from Phase 1 — must still hold)
 # ==================================================================
 
 class TestSlangHunterAnalyze:
-    """Tests for the analyze() method."""
+    """Tests for the analyze() method contract."""
 
     def test_analyze_returns_dict(self):
         """analyze() should return a dictionary."""

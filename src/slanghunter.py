@@ -331,6 +331,221 @@ class SlangHunter:
         }
 
     # ------------------------------------------------------------------
+    # Scoring weights — tune these to adjust sensitivity
+    # ------------------------------------------------------------------
+
+    # Points awarded per detection type (raw, before clamping).
+    WEIGHT_KEYWORD: float = 0.15
+    WEIGHT_PATTERN: float = 0.25
+    WEIGHT_PRICE_CONTEXT: float = 0.20
+    # Bonus when BOTH text hits AND price context align.
+    WEIGHT_COMBO_BONUS: float = 0.10
+    # Maximum raw score is clamped to 1.0.
+
+    # ------------------------------------------------------------------
+    # Text Normalization — "80 % of NLP is cleaning"
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """
+        Clean and normalize raw listing text for analysis.
+
+        Steps:
+            1. Lowercase the entire string.
+            2. Collapse multiple whitespace into single spaces.
+            3. Strip leading / trailing whitespace.
+
+        We intentionally do NOT strip special characters or
+        emojis because our regex patterns depend on them
+        (e.g. ``$``, ``@``, ``🍃``).
+
+        Args:
+            text: The raw listing text.
+
+        Returns:
+            A cleaned, lowercased string ready for scanning.
+        """
+        text = text.lower()
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    # ------------------------------------------------------------------
+    # Scanning primitives — one concern per method
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _scan_keywords(normalized: str, keywords: list[str]) -> list[str]:
+        """
+        Scan normalized text for exact keyword matches.
+
+        Args:
+            normalized: The already-normalized text.
+            keywords: List of lowercase keyword strings.
+
+        Returns:
+            A list of matched keyword strings (may be empty).
+        """
+        found: list[str] = []
+        for kw in keywords:
+            # Use word-boundary-aware search for single words,
+            # and plain `in` for multi-word phrases.
+            if " " in kw:
+                if kw in normalized:
+                    found.append(kw)
+            else:
+                if re.search(rf"\b{re.escape(kw)}\b", normalized):
+                    found.append(kw)
+        return found
+
+    @staticmethod
+    def _scan_patterns(
+        text: str, patterns: list[re.Pattern]
+    ) -> list[str]:
+        """
+        Scan text against a list of compiled regex patterns.
+
+        We run against the *original* (non-lowered) text for
+        patterns that match emojis or case-sensitive markers,
+        AND against the normalized text for everything else.
+        Each pattern object already carries its own flags.
+
+        Args:
+            text: The raw (or normalized) text to scan.
+            patterns: Compiled ``re.Pattern`` objects.
+
+        Returns:
+            A list of matched pattern descriptions (the
+            ``.pattern`` attribute of each ``re.Pattern``).
+        """
+        hits: list[str] = []
+        for pat in patterns:
+            match = pat.search(text)
+            if match:
+                hits.append(match.group())
+        return hits
+
+    @staticmethod
+    def _check_price_context(
+        price: float | None,
+        threshold: dict,
+    ) -> bool:
+        """
+        Determine if a listing price falls inside the suspicious
+        price window for a given crime category.
+
+        Args:
+            price: The listing price (None if unknown).
+            threshold: The ``risk_threshold`` dict with keys
+                ``min`` and ``max``.
+
+        Returns:
+            True if the price is within the suspicious range.
+            False if price is None or outside the range.
+        """
+        if price is None:
+            return False
+        return threshold["min"] <= price <= threshold["max"]
+
+    # ------------------------------------------------------------------
+    # Scoring — cumulative, not binary
+    # ------------------------------------------------------------------
+
+    def _calculate_score(
+        self,
+        keyword_hits: list[str],
+        pattern_hits: list[str],
+        price_match: bool,
+    ) -> float:
+        """
+        Compute a cumulative risk score from 0.0 to 1.0.
+
+        Scoring formula:
+            score  = (unique_kw_count × WEIGHT_KEYWORD)
+                   + (unique_pat_count × WEIGHT_PATTERN)
+                   + (WEIGHT_PRICE_CONTEXT if price_match)
+                   + (WEIGHT_COMBO_BONUS if text_hit AND price_match)
+
+        The result is clamped to [0.0, 1.0].
+
+        Args:
+            keyword_hits: Keywords found in the text.
+            pattern_hits: Regex pattern matches found.
+            price_match: Whether the price is in the danger zone.
+
+        Returns:
+            A float between 0.0 (clean) and 1.0 (maximum risk).
+        """
+        score = 0.0
+
+        # Each unique keyword contributes its weight.
+        score += len(keyword_hits) * self.WEIGHT_KEYWORD
+        # Each unique pattern match contributes its weight.
+        score += len(pattern_hits) * self.WEIGHT_PATTERN
+
+        has_text_evidence = len(keyword_hits) + len(pattern_hits) > 0
+
+        # Price context is an AMPLIFIER, not a standalone signal.
+        # A $45 bookshelf should NOT be flagged just because the
+        # price is in a suspicious range.  Price only matters
+        # when there is already textual evidence.
+        if price_match and has_text_evidence:
+            score += self.WEIGHT_PRICE_CONTEXT
+            # Combo bonus: text + price together is more damning.
+            score += self.WEIGHT_COMBO_BONUS
+
+        # Clamp to [0.0, 1.0].
+        return min(max(score, 0.0), 1.0)
+
+    # ------------------------------------------------------------------
+    # Verdict builder
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_reasoning(
+        category: str,
+        keyword_hits: list[str],
+        pattern_hits: list[str],
+        price_match: bool,
+        legal_ref: dict,
+    ) -> str:
+        """
+        Generate a human-readable explanation for a single
+        category's findings.
+
+        Args:
+            category: Crime category name.
+            keyword_hits: Matched keywords.
+            pattern_hits: Matched pattern strings.
+            price_match: Whether the price triggered context.
+            legal_ref: The legal_reference dict.
+
+        Returns:
+            A multi-line string summarizing the findings.
+        """
+        lines: list[str] = []
+        lines.append(f"[{category.upper()}]")
+
+        if keyword_hits:
+            kw_str = ", ".join(f"'{k}'" for k in keyword_hits)
+            lines.append(f"  Keywords matched: {kw_str}")
+
+        if pattern_hits:
+            pat_str = ", ".join(f"'{p}'" for p in pattern_hits)
+            lines.append(f"  Slang patterns matched: {pat_str}")
+
+        if price_match:
+            lines.append("  Price falls within suspicious range.")
+
+        if keyword_hits or pattern_hits:
+            lines.append(
+                f"  Legal basis: {legal_ref['statute']} "
+                f"— {legal_ref['name']}"
+            )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -370,19 +585,100 @@ class SlangHunter:
         """
         Analyze a marketplace listing for fraud indicators.
 
+        This is the main entry point.  It normalizes the input,
+        scans against every crime category in the knowledge base,
+        accumulates a risk score, and returns a structured verdict.
+
         Args:
             text: The raw listing text to analyze.
-            price: Optional listed price for contextual analysis.
+            price: Optional listed price (USD) for contextual
+                analysis.
 
         Returns:
-            A dictionary containing the risk verdict with keys:
-                - risk_score (float): 0.0 (safe) to 1.0 (high risk).
-                - flags (list[str]): Detected risk indicators.
-                - reasoning (str): Human-readable explanation.
+            A dictionary containing:
+                - risk_score (float): 0.0 (safe) → 1.0 (critical).
+                - flags (list[str]): Each flag is
+                  ``"category:indicator"`` for downstream filtering.
+                - reasoning (str): Human-readable explanation with
+                  legal references.
+                - matched_categories (list[str]): Which crime
+                  categories were triggered.
         """
-        # TODO: Wire up detection logic in Phase 3
+        normalized = self._normalize_text(text)
+
+        all_flags: list[str] = []
+        all_reasoning: list[str] = []
+        matched_categories: list[str] = []
+        total_score: float = 0.0
+
+        for cat_name, cat_data in self.risk_database.items():
+            # --- 1. Keyword scan (on normalized text) ---
+            kw_hits = self._scan_keywords(
+                normalized, cat_data["keywords"]
+            )
+
+            # --- 2. Pattern scan (on raw + normalized) ---
+            # Run on both raw text (for emoji / case patterns)
+            # and normalized text (for lowered patterns).
+            pat_hits_raw = self._scan_patterns(
+                text, cat_data["slang_patterns"]
+            )
+            pat_hits_norm = self._scan_patterns(
+                normalized, cat_data["slang_patterns"]
+            )
+            # Deduplicate while preserving order.
+            seen: set[str] = set()
+            pat_hits: list[str] = []
+            for hit in pat_hits_raw + pat_hits_norm:
+                if hit not in seen:
+                    seen.add(hit)
+                    pat_hits.append(hit)
+
+            # --- 3. Price context check ---
+            price_match = self._check_price_context(
+                price, cat_data["risk_threshold"]
+            )
+
+            # --- 4. Score this category ---
+            cat_score = self._calculate_score(
+                kw_hits, pat_hits, price_match
+            )
+
+            # --- 5. Accumulate results ---
+            # A category is only "matched" if there is text
+            # evidence.  Price context alone is never enough
+            # to flag a listing — it only amplifies text hits.
+            if kw_hits or pat_hits:
+                matched_categories.append(cat_name)
+
+                # Build flags as "category:indicator".
+                for kw in kw_hits:
+                    all_flags.append(f"{cat_name}:kw:{kw}")
+                for pat in pat_hits:
+                    all_flags.append(f"{cat_name}:pat:{pat}")
+                if price_match and (kw_hits or pat_hits):
+                    all_flags.append(f"{cat_name}:price_context")
+
+                # Build reasoning block.
+                reasoning = self._build_reasoning(
+                    cat_name, kw_hits, pat_hits, price_match,
+                    cat_data["legal_reference"],
+                )
+                all_reasoning.append(reasoning)
+
+            # Take the max score across categories — a listing
+            # is as risky as its most dangerous category.
+            total_score = max(total_score, cat_score)
+
+        # --- Final verdict ---
+        if not all_flags:
+            reasoning_text = "No risk indicators detected."
+        else:
+            reasoning_text = "\n".join(all_reasoning)
+
         return {
-            "risk_score": 0.0,
-            "flags": [],
-            "reasoning": "No analysis rules loaded yet.",
+            "risk_score": round(total_score, 2),
+            "flags": all_flags,
+            "reasoning": reasoning_text,
+            "matched_categories": matched_categories,
         }
