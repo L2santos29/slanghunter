@@ -55,7 +55,7 @@ jobs:
       # Install the package in editable mode with all dev extras (pytest,
       # pytest-cov, flake8, mypy) — no separate requirements.txt needed.
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,api]"
 
       # pytest config in pyproject.toml already sets --cov=src --cov=api
       # --cov-fail-under=80; --tb=short keeps log output readable in CI.

@@ -7,6 +7,8 @@ Run with: pytest tests/ -v
 import json
 import re
 
+import pytest
+
 from src.slanghunter import RiskLevel, SlangHunter
 
 # Expected crime categories in the knowledge base.
@@ -1161,7 +1163,8 @@ class TestApiLayer:
 
     def test_analyze_request_rejects_whitespace_only_text(self):
         """API model should reject payloads that are not meaningfully non-empty."""
-        import pytest
+        pytest.importorskip("fastapi")
+        pytest.importorskip("pydantic")
         from pydantic import ValidationError
 
         from api.models import AnalyzeRequest
@@ -1171,6 +1174,7 @@ class TestApiLayer:
 
     def test_health_endpoint_returns_status_and_version(self):
         """Health endpoint should expose the deployment contract."""
+        pytest.importorskip("fastapi")
         from api.main import app, health
 
         payload = health()
@@ -1181,7 +1185,7 @@ class TestApiLayer:
 
     def test_category_endpoints_return_data_and_404(self):
         """Category metadata endpoint should expose known categories only."""
-        import pytest
+        pytest.importorskip("fastapi")
         from fastapi import HTTPException
 
         from api.main import get_category, list_categories
@@ -1199,6 +1203,7 @@ class TestApiLayer:
 
     def test_analyze_endpoint_returns_serialized_verdict(self):
         """Analyze endpoint should map engine output into the response model."""
+        pytest.importorskip("fastapi")
         from api.main import analyze_listing
         from api.models import AnalyzeRequest
 
@@ -1215,7 +1220,7 @@ class TestApiLayer:
         self, monkeypatch
     ):
         """Endpoint should translate engine validation errors into HTTP errors."""
-        import pytest
+        pytest.importorskip("fastapi")
         from fastapi import HTTPException
 
         import api.main as api_main
@@ -1233,6 +1238,7 @@ class TestApiLayer:
 
     def test_startup_logs_loaded_category_count(self, monkeypatch):
         """Startup hook should log operational visibility details."""
+        pytest.importorskip("fastapi")
         import asyncio
 
         import api.main as api_main
@@ -1253,6 +1259,7 @@ class TestApiLayer:
         self, monkeypatch, tmp_path
     ):
         """Reload endpoint should repopulate the singleton from JSON files."""
+        pytest.importorskip("fastapi")
         import api.main as api_main
 
         (tmp_path / "surikae.json").write_text(
