@@ -1,0 +1,63 @@
+{
+  "keywords": [
+    "replica",
+    "rep",
+    "reps",
+    "1:1",
+    "aaa quality",
+    "ua",
+    "mirror quality",
+    "top quality copy",
+    "inspired by",
+    "designer inspired",
+    "not original",
+    "class a",
+    "class b",
+    "oem",
+    "unbranded",
+    "like authentic",
+    "same as original",
+    "high copy",
+    "super copy",
+    "jordan 1",
+    "yeezy",
+    "airpod",
+    "louis vuitton",
+    "gucci",
+    "rolex",
+    "supreme",
+    "off-white",
+    "balenciaga",
+    "comes in original box",
+    "no tags",
+    "without receipt",
+    "factory direct",
+    "guangzhou",
+    "dm for pics",
+    "dm for real pics"
+  ],
+  "slang_patterns": [
+    "r[3e]pl[i1!]c[a@]",
+    "1[\\s._:]*(?:to)?[\\s._:]*1",
+    "\\bua\\b",
+    "(?:gucc[i1!]|lou[i1!]s|rol[e3]x|suprem[e3]|bal[e3]nc[i1!]aga)[\\s._]*(?:inspired|style|type|look)",
+    "\\b[aA]{2,3}\\+?\\s*(?:quality|grade)",
+    "[o0][\\s._]*[e3][\\s._]*m",
+    "[\\U0001F525\\U0001F45F\\U0001F45C\\u231A]"
+  ],
+  "risk_threshold": {
+    "min": 30.0,
+    "max": 250.0,
+    "description": "Counterfeits are priced high enough to seem 'real' but far below retail.  A 'Rolex' at $150 or 'Jordans' at $45 are classic surikae price points."
+  },
+  "legal_reference": {
+    "statute": "18 U.S.C. § 2320",
+    "name": "Trafficking in Counterfeit Goods or Services",
+    "summary": "Intentionally trafficking in goods or services using a counterfeit mark."
+  },
+  "jp_legal_reference": {
+    "statute": "不正競争防止法 Art. 2",
+    "name": "Unfair Competition Prevention Act",
+    "summary": "Prohibits use of well-known trade marks and sale of counterfeit goods in Japan."
+  }
+}

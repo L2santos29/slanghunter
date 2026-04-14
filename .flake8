@@ -1,0 +1,23 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .flake8 — SlangHunter linter configuration
+#
+# flake8 does not support pyproject.toml natively (as of flake8 6.x).
+# This file is the authoritative configuration source for all flake8 settings.
+# Reference: https://flake8.pycqa.org/en/latest/user/configuration.html
+# ──────────────────────────────────────────────────────────────────────────────
+
+[flake8]
+# Align with Black's default line length for formatter compatibility
+max-line-length = 100
+
+# E203: whitespace before ':' — conflicts with Black slice formatting
+# W503: line break before binary operator — superseded by W504; Black-compatible
+extend-ignore = E203, W503
+
+# Scope linting to production source and tests only
+per-file-ignores =
+    # Test files legitimately use broad assertions and may shadow builtins
+    tests/*:S101
+
+# Enforce consistent import ordering
+max-complexity = 10

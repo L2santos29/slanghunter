@@ -15,8 +15,42 @@ Author: Legal Engineer
 Created: 2026-02-14
 """
 
+import json
 import re
+import warnings
 from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from .ml import ScoreAugmentor
+
+
+class RiskLevel(Enum):
+    """
+    Traffic-light risk classification.
+
+    Each member carries three presentation attributes:
+        - emoji:  visual indicator for console / Slack / email.
+        - label:  human-readable severity name.
+        - action: recommended operational response.
+    """
+
+    CRITICAL = ("🔴", "CRITICAL", "AUTOMATIC BLOCK — Escalate to Legal")
+    WARNING = ("🟡", "WARNING", "MANUAL REVIEW — Flag for T&S analyst")
+    SAFE = ("🟢", "SAFE", "APPROVED — No action required")
+
+    def __init__(self, emoji: str, label: str, action: str) -> None:
+        """Store the display attributes for this risk level.
+
+        Args:
+            emoji: Visual indicator (🔴, 🟡, or 🟢).
+            label: Human-readable severity label.
+            action: Recommended operational response.
+        """
+        self.emoji = emoji
+        self.label = label
+        self.action = action
 
 
 class SlangHunter:
@@ -44,7 +78,13 @@ class SlangHunter:
     # Initialization — build the knowledge base
     # ------------------------------------------------------------------
 
-    def __init__(self):
+    # Classification thresholds promoted to class attributes so
+    # operators can tune severity without rewriting method logic.
+    THRESHOLD_CRITICAL: ClassVar[float] = 0.80
+    THRESHOLD_WARNING: ClassVar[float] = 0.40
+    MAX_TEXT_LENGTH: ClassVar[int] = 10_000
+
+    def __init__(self) -> None:
         """
         Initialize the SlangHunter engine.
 
@@ -52,21 +92,128 @@ class SlangHunter:
         truth for all detection rules.  Adding a new crime type
         is as simple as adding a new key to this dictionary.
         """
-        self.risk_database: dict = self._build_risk_database()
+        self.risk_database: dict[str, dict[str, Any]] = (
+            self._build_risk_database()
+        )
+
+    @staticmethod
+    def _default_data_dir() -> Path:
+        """Return the conventional project-level JSON data directory."""
+        return Path(__file__).parent.parent / "data"
+
+    @classmethod
+    def _load_risk_database(
+        cls,
+        data_dir: Path | str | None = None,
+        *,
+        require_exists: bool = False,
+    ) -> dict[str, dict[str, Any]]:
+        """Load the knowledge base from JSON files or built-in fallback."""
+        resolved_data_dir = (
+            cls._default_data_dir()
+            if data_dir is None
+            else Path(data_dir)
+        )
+
+        if not resolved_data_dir.exists() or not resolved_data_dir.is_dir():
+            if require_exists:
+                raise FileNotFoundError(
+                    f"data directory not found: {resolved_data_dir}"
+                )
+            warnings.warn(
+                (
+                    "JSON knowledge base directory not found; falling back "
+                    "to built-in risk database"
+                ),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return cls._build_risk_database()
+
+        json_files = sorted(resolved_data_dir.glob("*.json"))
+        if not json_files:
+            warnings.warn(
+                (
+                    "No JSON knowledge base files found; falling back "
+                    "to built-in risk database"
+                ),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return cls._build_risk_database()
+
+        loaded_database: dict[str, dict[str, Any]] = {}
+        for json_file in json_files:
+            with json_file.open("r", encoding="utf-8") as file_obj:
+                category_data = json.load(file_obj)
+
+            # Compile regexes at load time so the on-disk format stays
+            # JSON-serializable and safe to edit without Python code.
+            category_data["slang_patterns"] = [
+                re.compile(pattern, re.IGNORECASE)
+                for pattern in category_data["slang_patterns"]
+            ]
+            loaded_database[json_file.stem] = category_data
+
+        return loaded_database
+
+    @classmethod
+    def from_data_dir(
+        cls, data_dir: Path | str | None = None
+    ) -> "SlangHunter":
+        """Create an instance backed by JSON data files when available.
+
+        If ``data_dir`` is ``None``, defaults to the project-level
+        ``data/`` directory. Missing or empty directories fall back to
+        the built-in hardcoded knowledge base with a warning.
+        """
+        hunter = cls()
+        # Reuse normal construction first, then replace the database so
+        # fallback behavior stays identical to the default engine path.
+        hunter.risk_database = cls._load_risk_database(data_dir)
+        return hunter
+
+    def reload_from_data_dir(
+        self, data_dir: Path | str | None = None
+    ) -> None:
+        """Reload the knowledge base from JSON without recreating self.
+
+        If ``data_dir`` is ``None``, the default project-level ``data/``
+        directory is used. Explicitly missing directories raise
+        ``FileNotFoundError`` so operators can distinguish bad paths from
+        fallback behavior.
+        """
+        reloaded_database = type(self)._load_risk_database(
+            data_dir,
+            require_exists=data_dir is not None,
+        )
+        # Replace the full mapping at once so callers never observe a
+        # partially reloaded knowledge base.
+        self.risk_database = reloaded_database
 
     # ------------------------------------------------------------------
     # Knowledge Base Factory
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_risk_database() -> dict:
+    def _build_risk_database() -> dict[str, dict[str, Any]]:
         """
-        Build and return the complete risk knowledge base.
+        Build and return the complete built-in fallback knowledge base.
+
+        For production deployments, prefer
+        ``SlangHunter.from_data_dir()`` so operators can update JSON
+        rule files without modifying Python source.
 
         Returns:
             A dictionary keyed by crime category, each containing
             keywords, slang_patterns, risk_threshold, and
             legal_reference.
+
+        SECURITY NOTE:
+            The knowledge base is stored unencrypted in-process memory.
+            For adversarial deployments where sellers may attempt to
+            reverse-engineer detection patterns, consider fetching the
+            knowledge base from a secured remote source at runtime.
 
         Design rationale:
             • ``keywords`` — exact lowercase tokens for fast lookup.
@@ -101,6 +248,8 @@ class SlangHunter:
                     "plug", "pack", "gas", "za",
                     "script", "scripts", "beans",
                 ],
+                # SECURITY: All patterns must be linear-complexity.
+                # Nested quantifiers are forbidden to prevent ReDoS.
                 "slang_patterns": [
                     # "p3rc" / "p3rcs" — Percocet with number swap
                     re.compile(r"p[3e]rc[s0]?", re.IGNORECASE),
@@ -159,6 +308,18 @@ class SlangHunter:
                         "dispense a controlled substance."
                     ),
                 },
+                "jp_legal_reference": {
+                    "statute": "薬機法 Art. 84",
+                    "name": (
+                        "Act on Securing Quality, Efficacy and Safety "
+                        "of Pharmaceuticals"
+                    ),
+                    "summary": (
+                        "Prohibits illicit manufacture, sale, and "
+                        "distribution of narcotics and stimulants in "
+                        "Japan."
+                    ),
+                },
             },
 
             # ══════════════════════════════════════════════════
@@ -187,6 +348,8 @@ class SlangHunter:
                     "invoice", "receipt generator",
                     "bank statement", "pay stub",
                 ],
+                # SECURITY: All patterns must be linear-complexity.
+                # Nested quantifiers are forbidden to prevent ReDoS.
                 "slang_patterns": [
                     # "ca$h app" / "ca$happ"
                     re.compile(
@@ -244,6 +407,14 @@ class SlangHunter:
                         "unlawful activity."
                     ),
                 },
+                "jp_legal_reference": {
+                    "statute": "組織犯罪処罰法 Art. 10",
+                    "name": "Act on Punishment of Organized Crimes",
+                    "summary": (
+                        "Criminalizes concealment of criminal proceeds "
+                        "(money laundering) in Japan."
+                    ),
+                },
             },
 
             # ══════════════════════════════════════════════════
@@ -271,6 +442,8 @@ class SlangHunter:
                     "factory direct", "guangzhou",
                     "dm for pics", "dm for real pics",
                 ],
+                # SECURITY: All patterns must be linear-complexity.
+                # Nested quantifiers are forbidden to prevent ReDoS.
                 "slang_patterns": [
                     # "r3plica" / "r3p" — replica evasion
                     re.compile(
@@ -328,6 +501,14 @@ class SlangHunter:
                         "or services using a counterfeit mark."
                     ),
                 },
+                "jp_legal_reference": {
+                    "statute": "不正競争防止法 Art. 2",
+                    "name": "Unfair Competition Prevention Act",
+                    "summary": (
+                        "Prohibits use of well-known trade marks and "
+                        "sale of counterfeit goods in Japan."
+                    ),
+                },
             },
         }
 
@@ -380,6 +561,10 @@ class SlangHunter:
         """
         Scan normalized text for exact keyword matches.
 
+        Both single-word and multi-word keywords use word-boundary
+        checks so phrases like ``western union`` do not falsely
+        match inside larger words such as ``northwestern``.
+
         Args:
             normalized: The already-normalized text.
             keywords: List of lowercase keyword strings.
@@ -389,10 +574,10 @@ class SlangHunter:
         """
         found: list[str] = []
         for kw in keywords:
-            # Use word-boundary-aware search for single words,
-            # and plain `in` for multi-word phrases.
+            # Boundary anchoring prevents phrase-level false
+            # positives inside longer tokens.
             if " " in kw:
-                if kw in normalized:
+                if re.search(rf"\b{re.escape(kw)}\b", normalized):
                     found.append(kw)
             else:
                 if re.search(rf"\b{re.escape(kw)}\b", normalized):
@@ -401,7 +586,7 @@ class SlangHunter:
 
     @staticmethod
     def _scan_patterns(
-        text: str, patterns: list[re.Pattern]
+        text: str, patterns: list[re.Pattern[str]]
     ) -> list[str]:
         """
         Scan text against a list of compiled regex patterns.
@@ -429,7 +614,7 @@ class SlangHunter:
     @staticmethod
     def _check_price_context(
         price: float | None,
-        threshold: dict,
+        threshold: dict[str, Any],
     ) -> bool:
         """
         Determine if a listing price falls inside the suspicious
@@ -508,7 +693,7 @@ class SlangHunter:
         keyword_hits: list[str],
         pattern_hits: list[str],
         price_match: bool,
-        legal_ref: dict,
+        legal_ref: dict[str, Any],
     ) -> str:
         """
         Generate a human-readable explanation for a single
@@ -560,7 +745,7 @@ class SlangHunter:
         """
         return sorted(self.risk_database.keys())
 
-    def get_category_info(self, category: str) -> dict | None:
+    def get_category_info(self, category: str) -> dict[str, Any] | None:
         """
         Return metadata for a specific crime category.
 
@@ -569,8 +754,9 @@ class SlangHunter:
 
         Returns:
             A dictionary with keyword_count, pattern_count,
-            risk_threshold, and legal_reference — or None if
-            the category does not exist.
+            risk_threshold, legal_reference, and
+            jp_legal_reference — or None if the category does
+            not exist.
         """
         entry = self.risk_database.get(category)
         if entry is None:
@@ -580,9 +766,14 @@ class SlangHunter:
             "pattern_count": len(entry["slang_patterns"]),
             "risk_threshold": entry["risk_threshold"],
             "legal_reference": entry["legal_reference"],
+            "jp_legal_reference": entry["jp_legal_reference"],
         }
 
-    def analyze(self, text: str, price: float | None = None) -> dict:
+    def analyze(
+        self,
+        text: str,
+        price: float | None = None,
+    ) -> dict[str, Any]:
         """
         Analyze a marketplace listing for fraud indicators.
 
@@ -604,7 +795,33 @@ class SlangHunter:
                   legal references.
                 - matched_categories (list[str]): Which crime
                   categories were triggered.
+
+        Raises:
+            TypeError: If ``text`` is not a ``str`` or if ``price``
+                is neither numeric nor ``None``.
+            ValueError: If ``text`` exceeds
+                ``self.MAX_TEXT_LENGTH`` characters or if ``price``
+                is negative.
         """
+        # Fail fast at the public API boundary so downstream helper
+        # methods can rely on stable, validated inputs.
+        if not isinstance(text, str):
+            raise TypeError(
+                f"text must be a str, got {type(text).__name__}"
+            )
+        if len(text) > self.MAX_TEXT_LENGTH:
+            raise ValueError(
+                "text exceeds maximum allowed length of "
+                f"{self.MAX_TEXT_LENGTH} characters"
+            )
+        if price is not None and not isinstance(price, (int, float)):
+            raise TypeError(
+                "price must be a numeric value or None, got "
+                f"{type(price).__name__}"
+            )
+        if price is not None and price < 0:
+            raise ValueError("price must be a non-negative numeric value")
+
         normalized = self._normalize_text(text)
 
         all_flags: list[str] = []
@@ -684,56 +901,85 @@ class SlangHunter:
             "matched_categories": matched_categories,
         }
 
-    # ------------------------------------------------------------------
-    # Report Generation — "Explainable AI for Legal Teams"
-    # ------------------------------------------------------------------
-
-    def classify_risk(self, score: float) -> "RiskLevel":
-        """
-        Map a numeric score to a RiskLevel enum value.
-
-        Thresholds (configurable on the class):
-            - CRITICAL: score > 0.80  →  automatic block
-            - WARNING:  score > 0.40  →  manual review
-            - SAFE:     score ≤ 0.40  →  approved
-
-        Args:
-            score: A risk score between 0.0 and 1.0.
-
-        Returns:
-            A ``RiskLevel`` enum member.
-        """
-        if score > 0.80:
-            return RiskLevel.CRITICAL
-        if score > 0.40:
-            return RiskLevel.WARNING
-        return RiskLevel.SAFE
-
-    def generate_report(
+    def analyze_enhanced(
         self,
         text: str,
         price: float | None = None,
-    ) -> str:
-        """
-        Analyze a listing and produce a full human-readable report.
+        augmentor: "ScoreAugmentor | None" = None,
+    ) -> dict[str, Any]:
+        """Analyze a listing with optional ML score augmentation.
 
-        This is the presentation layer — it calls ``analyze()``
-        internally, then formats the verdict for non-technical
-        stakeholders (lawyers, ops managers, compliance auditors).
-
-        Every decision is traceable: the report states *what* was
-        detected, *which law* it violates, and *why* the risk
-        level was assigned.  ("Explainable AI" for Legal Tech.)
+        Runs the full rule-based analysis pipeline first, then optionally
+        applies an ML augmentor for additional confidence scoring.
 
         Args:
-            text: The raw listing text.
+            text: The listing text to analyze.
             price: Optional listing price in USD.
+            augmentor: Optional score augmentor. If `None`, this returns the
+                same verdict as [SlangHunter.analyze()](src/slanghunter.py:770)
+                plus explicit ML metadata fields.
 
         Returns:
-            A formatted multi-line string ready for console
-            output or logging.
+            The standard `analyze()` result dict, extended with:
+                - `ml_augmented`: Whether an augmentor was applied.
+                - `ml_confidence`: Raw ML confidence.
+                - `ml_boosted_score`: Final score after augmentation.
+
+        Design guarantee:
+            If no rule-based flags exist, the returned risk score cannot exceed
+            `THRESHOLD_WARNING - 0.01` regardless of ML confidence.
         """
-        verdict = self.analyze(text, price)
+        base_result = self.analyze(text, price)
+        if augmentor is None:
+            return base_result | {
+                "ml_augmented": False,
+                "ml_confidence": 0.0,
+                "ml_boosted_score": base_result["risk_score"],
+            }
+
+        has_rule_hits = len(base_result["flags"]) > 0
+        # The augmentor only refines confidence around the deterministic
+        # verdict; the rule engine remains the legal source of truth.
+        candidate_score = augmentor.augment(
+            text,
+            base_result["risk_score"],
+            has_rule_hits,
+        )
+        if has_rule_hits:
+            max_boost = float(getattr(augmentor, "MAX_BOOST", 0.0))
+            # Enforce the additive-only contract at the engine boundary so a
+            # non-conforming duck-typed augmentor cannot override legal policy.
+            boosted_score = min(
+                max(base_result["risk_score"], candidate_score),
+                min(base_result["risk_score"] + max_boost, 1.0),
+            )
+        else:
+            # No-rule-hit listings may gain soft confidence, but they can never
+            # cross the warning threshold without deterministic evidence.
+            boosted_score = min(
+                max(base_result["risk_score"], candidate_score),
+                self.THRESHOLD_WARNING - 0.01,
+            )
+
+        ml_confidence = float(getattr(augmentor, "confidence", 0.0))
+
+        return base_result | {
+            "risk_score": boosted_score,
+            "ml_augmented": True,
+            "ml_confidence": ml_confidence,
+            "ml_boosted_score": boosted_score,
+        }
+
+    def _format_report(
+        self,
+        text: str,
+        price: float | None,
+        verdict: dict[str, Any],
+    ) -> str:
+        """Format a precomputed verdict into the console report."""
+        # Centralizing formatting here keeps [generate_report()]
+        # and [print_report()] consistent while preserving their
+        # public signatures.
         level = self.classify_risk(verdict["risk_score"])
         score_pct = int(verdict["risk_score"] * 100)
 
@@ -796,18 +1042,74 @@ class SlangHunter:
 
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # Report Generation — "Explainable AI for Legal Teams"
+    # ------------------------------------------------------------------
+
+    def classify_risk(self, score: float) -> RiskLevel:
+        """
+        Map a numeric score to a RiskLevel enum value.
+
+        Thresholds are controlled by the class attributes
+        ``THRESHOLD_CRITICAL`` and ``THRESHOLD_WARNING`` so
+        subclasses can tune sensitivity without rewriting this
+        method.
+
+            - CRITICAL: score > THRESHOLD_CRITICAL → automatic block
+            - WARNING:  score > THRESHOLD_WARNING  → manual review
+            - SAFE:     otherwise                  → approved
+
+        Args:
+            score: A risk score between 0.0 and 1.0.
+
+        Returns:
+            A ``RiskLevel`` enum member.
+        """
+        if score > self.THRESHOLD_CRITICAL:
+            return RiskLevel.CRITICAL
+        if score > self.THRESHOLD_WARNING:
+            return RiskLevel.WARNING
+        return RiskLevel.SAFE
+
+    def generate_report(
+        self,
+        text: str,
+        price: float | None = None,
+    ) -> str:
+        """
+        Analyze a listing and produce a full human-readable report.
+
+        This is the presentation layer — it calls ``analyze()``
+        once, then formats that verdict for non-technical
+        stakeholders (lawyers, ops managers, compliance auditors).
+
+        Every decision is traceable: the report states *what* was
+        detected, *which law* it violates, and *why* the risk
+        level was assigned.  ("Explainable AI" for Legal Tech.)
+
+        Args:
+            text: The raw listing text.
+            price: Optional listing price in USD.
+
+        Returns:
+            A formatted multi-line string ready for console
+            output or logging.
+        """
+        verdict = self.analyze(text, price)
+        return self._format_report(text, price, verdict)
+
     def print_report(
         self,
         text: str,
         price: float | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Analyze, print the human-readable report, and return
         the raw verdict dict.
 
-        Convenience method that combines ``generate_report()``
-        (for the console) with ``analyze()`` (for programmatic
-        use).
+        Convenience method that analyzes once, prints a report
+        derived from that single verdict, and returns the exact
+        same dictionary for programmatic use.
 
         Args:
             text: The raw listing text.
@@ -816,37 +1118,7 @@ class SlangHunter:
         Returns:
             The raw verdict dictionary from ``analyze()``.
         """
-        report = self.generate_report(text, price)
+        verdict = self.analyze(text, price)
+        report = self._format_report(text, price, verdict)
         print(report)
-        return self.analyze(text, price)
-
-
-# ======================================================================
-# RiskLevel Enum — traffic-light system
-# ======================================================================
-
-class RiskLevel(Enum):
-    """
-    Traffic-light risk classification.
-
-    Each member carries three presentation attributes:
-        - emoji:  visual indicator for console / Slack / email.
-        - label:  human-readable severity name.
-        - action: recommended operational response.
-    """
-
-    CRITICAL = ("🔴", "CRITICAL", "AUTOMATIC BLOCK — Escalate to Legal")
-    WARNING = ("🟡", "WARNING", "MANUAL REVIEW — Flag for T&S analyst")
-    SAFE = ("🟢", "SAFE", "APPROVED — No action required")
-
-    def __init__(self, emoji: str, label: str, action: str):
-        """Store the display attributes for this risk level.
-
-        Args:
-            emoji: Visual indicator (🔴, 🟡, or 🟢).
-            label: Human-readable severity label.
-            action: Recommended operational response.
-        """
-        self.emoji = emoji
-        self.label = label
-        self.action = action
+        return verdict

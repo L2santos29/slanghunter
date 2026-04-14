@@ -1,0 +1,12 @@
+# Curated dependency lock for slanghunter
+# Generated: 2026-04-13
+# Install dev: pip install -e ".[dev]"
+# For reproducible CI: pip install -r requirements-dev.lock -e .
+#
+# Upper bounds follow the known-safe next-major pattern.
+# Review and update this file when major versions of these packages are released.
+
+pytest>=7.4.0,<9.0
+flake8>=6.1.0,<8.0
+pytest-cov>=4.0,<6.0
+mypy>=1.5,<2.0

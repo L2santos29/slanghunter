@@ -1,0 +1,106 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .github/workflows/ci.yml — SlangHunter CI/CD Pipeline
+# Triggers: push to main/develop, PR to main
+# Jobs: test (matrix 3.10/3.11/3.12) → build (package verification)
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 1: Test & Lint across the full supported Python version matrix.
+  # fail-fast: false ensures all versions run even when one fails, giving a
+  # complete compatibility picture before any fixes are applied.
+  # ────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test & Lint (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2  # Pinned to minor: supply-chain hardening S6 (SH-009)
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5.3.0  # Pinned to minor: supply-chain hardening S6 (SH-009)
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Cache the pip download cache keyed on pyproject.toml so the cache is
+      # invalidated automatically whenever dependencies change.
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.0  # Pinned to minor: supply-chain hardening S6 (SH-009)
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Install the package in editable mode with all dev extras (pytest,
+      # pytest-cov, flake8, mypy) — no separate requirements.txt needed.
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # pytest config in pyproject.toml already sets --cov=src --cov=api
+      # --cov-fail-under=80; --tb=short keeps log output readable in CI.
+      - name: Run tests with coverage
+        run: pytest --tb=short
+
+      # Hard gate: zero flake8 violations permitted.
+      - name: Run flake8 lint
+        run: flake8 src/ api/ tests/ demo.py
+
+      # Soft gate: mypy failures are reported but do not block the pipeline.
+      # continue-on-error: true is intentional while strict typing coverage is
+      # still being incrementally expanded across the codebase.
+      - name: Run mypy type check
+        run: mypy src/ --ignore-missing-imports
+        continue-on-error: true
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 2: Package build verification — runs only after the full test matrix
+  # passes. Confirms pyproject.toml metadata and hatchling config are correct
+  # and that both .whl and .tar.gz artifacts are produced cleanly.
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Package Build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2  # Pinned to minor: supply-chain hardening S6 (SH-009)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0  # Pinned to minor: supply-chain hardening S6 (SH-009)
+        with:
+          python-version: "3.12"
+
+      # hatchling is the PEP 517 build backend; `build` is the frontend.
+      - name: Install build tools
+        run: pip install hatchling build
+
+      # Exercises the full PEP 517 build path — catches metadata errors,
+      # MANIFEST issues, and hatchling configuration problems before release.
+      - name: Build package
+        run: python -m build
+
+      # Sanity-check: both a wheel and a source distribution must be present.
+      - name: Verify dist artifacts
+        run: ls -la dist/

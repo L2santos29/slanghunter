@@ -1,0 +1,11 @@
+# Curated dependency lock for slanghunter
+# Generated: 2026-04-13
+# Install api: pip install -e ".[api]"
+# For reproducible CI: pip install -r requirements-api.lock -e .
+#
+# Upper bounds follow the known-safe next-major pattern.
+# Review and update this file when major versions of these packages are released.
+
+fastapi>=0.100.0,<1.0
+uvicorn>=0.23.0,<1.0
+pydantic>=2.0,<3.0

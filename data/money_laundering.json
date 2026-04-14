@@ -1,0 +1,67 @@
+{
+  "keywords": [
+    "cash app",
+    "cashapp",
+    "zelle",
+    "venmo",
+    "western union",
+    "moneygram",
+    "wire transfer",
+    "wire",
+    "btc",
+    "bitcoin",
+    "eth",
+    "ethereum",
+    "usdt",
+    "tether",
+    "crypto",
+    "tumbler",
+    "mixer",
+    "gift card",
+    "giftcard",
+    "gc",
+    "itunes card",
+    "steam card",
+    "amazon card",
+    "flip",
+    "double your money",
+    "money flip",
+    "cash flip",
+    "loading",
+    "load",
+    "method",
+    "blank atm",
+    "cloned card",
+    "fullz",
+    "dumps",
+    "cc dump",
+    "invoice",
+    "receipt generator",
+    "bank statement",
+    "pay stub"
+  ],
+  "slang_patterns": [
+    "ca[$s]h[\\s._]*app",
+    "b[i1!][\\s._]*t[\\s._]*c[\\s._]*[o0][\\s._]*[i1!][\\s._]*n",
+    "m[o0]n[e3]y[\\s._]*fl[i1!]p",
+    "g[i1!]ft[\\s._]*c[a4@]rd",
+    "bl[a4@]nk[\\s._]*[a4@]tm",
+    "[\\U0001F4B8\\U0001F4B0\\U0001F3E6]",
+    "cl[o0]n[e3]d[\\s._]*c[a4@]rd"
+  ],
+  "risk_threshold": {
+    "min": 0.0,
+    "max": 50.0,
+    "description": "Laundering listings are often priced very low ($5-$50) because the 'product' is a service (flipping, loading) or a digital good (method, fullz)."
+  },
+  "legal_reference": {
+    "statute": "18 U.S.C. § 1956",
+    "name": "Laundering of Monetary Instruments",
+    "summary": "Knowingly conducting a financial transaction involving proceeds of unlawful activity."
+  },
+  "jp_legal_reference": {
+    "statute": "組織犯罪処罰法 Art. 10",
+    "name": "Act on Punishment of Organized Crimes",
+    "summary": "Criminalizes concealment of criminal proceeds (money laundering) in Japan."
+  }
+}

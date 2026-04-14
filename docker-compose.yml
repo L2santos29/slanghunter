@@ -1,0 +1,34 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — SlangHunter local development convenience stack
+#
+# Usage:
+#   docker compose up --build        # build image and start API
+#   docker compose up -d             # start detached (image must exist)
+#   docker compose down              # stop and remove containers
+#
+# The data/ volume mount allows knowledge-base JSON files to be edited on the
+# host and picked up on the next request without rebuilding the image.
+# ──────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+  slanghunter-api:
+    build: .
+    ports:
+      # Map host port 8000 → container port 8000 (matches uvicorn CMD).
+      - "8000:8000"
+    volumes:
+      # Live-mount the knowledge-base directory so JSON edits on the host are
+      # immediately visible inside the container without a rebuild. The
+      # SlangHunter singleton loads files at startup, so a container restart
+      # (`docker compose restart slanghunter-api`) still picks up changes.
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

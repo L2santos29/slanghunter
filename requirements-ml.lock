@@ -1,0 +1,9 @@
+# Curated dependency lock for slanghunter
+# Generated: 2026-04-13
+# Install ml: pip install -e ".[ml]"
+# For reproducible CI: pip install -r requirements-ml.lock -e .
+#
+# Upper bounds follow the known-safe next-major pattern.
+# Review and update this file when major versions of these packages are released.
+
+scikit-learn>=1.3,<2.0

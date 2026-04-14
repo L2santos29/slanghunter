@@ -1,0 +1,45 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .dockerignore — SlangHunter Docker build exclusions
+#
+# Goal: keep the build context small and the final image lean by excluding
+# everything that is not required to run the API in production.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Version control
+.git/
+.github/
+.gitignore
+
+# Python bytecode and caches — never needed inside a container
+__pycache__/
+*.pyc
+*.pyo
+
+# Test and quality-tool artefacts
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build output — rebuilt inside the builder stage; stale local dist/ must not
+# pollute the image layer.
+dist/
+*.egg-info/
+
+# Local virtual environments — the container installs its own dependencies
+.venv/
+venv/
+
+# Test suite — not required at runtime
+tests/
+
+# Developer-facing documentation and scripts that add no value to the image
+IMPROVEMENT_PLAN.md
+CHANGELOG.md
+demo.py
+
+# Exclude all markdown files EXCEPT README.md (referenced by pyproject.toml)
+# and data/README.md (lives inside the data/ subtree, excluded selectively).
+*.md
+!README.md
+!data/README.md

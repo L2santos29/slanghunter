@@ -4,6 +4,7 @@ test_slanghunter.py — Unit tests for the SlangHunter engine.
 Run with: pytest tests/ -v
 """
 
+import json
 import re
 
 from src.slanghunter import RiskLevel, SlangHunter
@@ -776,3 +777,661 @@ class TestPrintReport:
         hunter.print_report("Selling kush")
         captured = capsys.readouterr()
         assert "SLANGHUNTER VERDICT" in captured.out
+
+
+# ==================================================================
+# 16. Emoji pattern isolation
+# ==================================================================
+
+class TestEmojiPatternMatching:
+    """Verify isolated emoji regex patterns compile and match."""
+
+    def _scan_category_patterns(self, category: str, text: str) -> list[str]:
+        """Return matched fragments for one category's pattern set."""
+        hunter = SlangHunter()
+        patterns = hunter.risk_database[category]["slang_patterns"]
+        return hunter._scan_patterns(text, patterns)
+
+    def test_drugs_leaf_emoji_pattern(self):
+        """The leaf emoji should hit the drugs emoji pattern."""
+        hits = self._scan_category_patterns("drugs", "🍃")
+        assert "🍃" in hits
+
+    def test_drugs_smoke_emoji_pattern(self):
+        """The smoke emoji should hit the drugs emoji pattern."""
+        hits = self._scan_category_patterns("drugs", "💨")
+        assert "💨" in hits
+
+    def test_money_wings_emoji_pattern(self):
+        """Money-with-wings should hit laundering emoji patterns."""
+        hits = self._scan_category_patterns("money_laundering", "💸")
+        assert "💸" in hits
+
+    def test_money_bag_emoji_pattern(self):
+        """Money bag should hit laundering emoji patterns."""
+        hits = self._scan_category_patterns("money_laundering", "💰")
+        assert "💰" in hits
+
+    def test_surikae_fire_emoji_pattern(self):
+        """Fire should hit the surikae emoji pattern."""
+        hits = self._scan_category_patterns("surikae", "🔥")
+        assert "🔥" in hits
+
+    def test_surikae_shoe_emoji_pattern(self):
+        """Sneaker should hit the surikae emoji pattern."""
+        hits = self._scan_category_patterns("surikae", "👟")
+        assert "👟" in hits
+
+    def test_clean_text_with_no_emojis_returns_empty_list(self):
+        """Plain text should not produce emoji-pattern hits."""
+        hunter = SlangHunter()
+        patterns = hunter.risk_database["surikae"]["slang_patterns"]
+        assert hunter._scan_patterns("ordinary listing text", patterns) == []
+
+
+# ==================================================================
+# 17. Missing high-risk pattern coverage
+# ==================================================================
+
+class TestMissingPatternCoverage:
+    """Cover high-risk evasion patterns with dedicated isolation tests."""
+
+    def test_adderall_evasion_pattern(self):
+        """Adderall number-swap evasion should flag drugs."""
+        hunter = SlangHunter()
+        result = hunter.analyze("4dd3r4ll available tonight")
+        assert "drugs" in result["matched_categories"]
+        assert any(flag.startswith("drugs:pat:") for flag in result["flags"])
+
+    def test_crystal_meth_evasion_pattern(self):
+        """Spaced crystal evasion should flag drugs."""
+        hunter = SlangHunter()
+        result = hunter.analyze("c r y s t a l ready for pickup")
+        assert "drugs" in result["matched_categories"]
+        assert any(flag.startswith("drugs:pat:") for flag in result["flags"])
+
+    def test_blank_atm_evasion_pattern(self):
+        """Blank ATM number-swap evasion should flag laundering."""
+        hunter = SlangHunter()
+        result = hunter.analyze("bl4nk 4tm cards available")
+        assert "money_laundering" in result["matched_categories"]
+        assert any(
+            flag.startswith("money_laundering:pat:")
+            for flag in result["flags"]
+        )
+
+    def test_cloned_card_evasion_pattern(self):
+        """Cloned-card number-swap evasion should flag laundering."""
+        hunter = SlangHunter()
+        result = hunter.analyze("cl0ned c4rd with fresh balance")
+        assert "money_laundering" in result["matched_categories"]
+        assert any(
+            flag.startswith("money_laundering:pat:")
+            for flag in result["flags"]
+        )
+
+
+# ==================================================================
+# 18. _build_reasoning() isolation
+# ==================================================================
+
+class TestBuildReasoning:
+    """Validate direct formatting behavior of _build_reasoning()."""
+
+    def test_build_reasoning_includes_all_evidence_sections(self):
+        """Reasoning should include the header, evidence, and law."""
+        reasoning = SlangHunter._build_reasoning(
+            "money_laundering",
+            ["cash app", "gift card"],
+            ["m0ney fl1p", "💸"],
+            True,
+            {
+                "statute": "18 U.S.C. § 1956",
+                "name": "Laundering of Monetary Instruments",
+                "summary": "Knowingly conducting a financial transaction.",
+            },
+        )
+        assert "[MONEY_LAUNDERING]" in reasoning
+        assert "'cash app'" in reasoning
+        assert "'gift card'" in reasoning
+        assert "'m0ney fl1p'" in reasoning
+        assert "'💸'" in reasoning
+        assert "Price falls within suspicious range." in reasoning
+        assert "18 U.S.C. § 1956" in reasoning
+
+    def test_build_reasoning_empty_hits_returns_minimal_string(self):
+        """No hits should still return a minimal valid heading."""
+        reasoning = SlangHunter._build_reasoning(
+            "drugs",
+            [],
+            [],
+            False,
+            {
+                "statute": "21 U.S.C. § 841",
+                "name": "Controlled Substances Act",
+                "summary": "Summary placeholder.",
+            },
+        )
+        assert reasoning == "[DRUGS]"
+
+
+# ==================================================================
+# 19. analyze() input validation
+# ==================================================================
+
+class TestAnalyzeInputValidation:
+    """Ensure public API input guards fail fast with clear errors."""
+
+    def test_analyze_raises_type_error_for_none_text(self):
+        """None text should raise TypeError before normalization."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(TypeError):
+            hunter.analyze(None)
+
+    def test_analyze_raises_type_error_for_integer_text(self):
+        """Integer text should raise TypeError before normalization."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(TypeError):
+            hunter.analyze(42)
+
+    def test_analyze_raises_value_error_for_overlength_text(self):
+        """Text beyond the configured limit should raise ValueError."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(ValueError):
+            hunter.analyze("x" * 10_001)
+
+    def test_analyze_accepts_max_length_text(self):
+        """Text exactly at the configured limit should be accepted."""
+        hunter = SlangHunter()
+        result = hunter.analyze("x" * 10_000)
+        assert isinstance(result, dict)
+
+    def test_analyze_raises_type_error_for_string_price(self):
+        """String prices should raise TypeError."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(TypeError):
+            hunter.analyze("text", price="free")
+
+    def test_analyze_raises_value_error_for_negative_price(self):
+        """Negative numeric prices should raise ValueError."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(ValueError):
+            hunter.analyze("test listing", price=-1.0)
+
+    def test_analyze_accepts_none_price(self):
+        """None remains a valid optional price input."""
+        hunter = SlangHunter()
+        result = hunter.analyze("test listing", price=None)
+        assert isinstance(result, dict)
+
+    def test_analyze_accepts_integer_price(self):
+        """Integer prices should be accepted as numeric input."""
+        hunter = SlangHunter()
+        result = hunter.analyze("test listing", price=10)
+        assert isinstance(result, dict)
+
+
+# ==================================================================
+# 20. __main__.py entry point
+# ==================================================================
+
+class TestMainEntryPoint:
+    """Smoke-test the module entry point used by python -m src."""
+
+    def test_main_runs_without_error(self, capsys):
+        """Calling main() should print non-empty demo output."""
+        from src.__main__ import main
+
+        main()
+        captured = capsys.readouterr()
+        assert captured.out.strip() != ""
+        assert any(
+            marker in captured.out
+            for marker in ["RISK ANALYSIS", "SAFE", "WARNING", "CRITICAL"]
+        )
+
+
+# ==================================================================
+# 21. JSON-backed knowledge base loading
+# ==================================================================
+
+class TestFromDataDir:
+    """Validate JSON-backed factory and reload behavior."""
+
+    def test_from_data_dir_loads_json_rules(self, tmp_path):
+        """Factory should compile regex strings from JSON files."""
+        rule_file = tmp_path / "drugs.json"
+        rule_file.write_text(
+            json.dumps(
+                {
+                    "keywords": ["fentanyl", "percocet"],
+                    "slang_patterns": ["p[3e]rc[s0]?"],
+                    "risk_threshold": {
+                        "min": 0.0,
+                        "max": 80.0,
+                        "description": "Short test range.",
+                    },
+                    "legal_reference": {
+                        "statute": "21 U.S.C. § 841",
+                        "name": "Controlled Substances Act",
+                        "summary": "Test summary.",
+                    },
+                    "jp_legal_reference": {
+                        "statute": "薬機法 Art. 84",
+                        "name": "Japanese statute",
+                        "summary": "Test summary.",
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        hunter = SlangHunter.from_data_dir(tmp_path)
+
+        assert hunter.get_categories() == ["drugs"]
+        assert isinstance(
+            hunter.risk_database["drugs"]["slang_patterns"][0],
+            re.Pattern,
+        )
+        result = hunter.analyze("got p3rcs hmu", price=20.0)
+        assert "drugs" in result["matched_categories"]
+
+    def test_from_data_dir_falls_back_for_missing_directory(self, tmp_path):
+        """Missing directories should warn and use built-in rules."""
+        import warnings
+
+        missing_dir = tmp_path / "missing"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            hunter = SlangHunter.from_data_dir(missing_dir)
+
+        assert hunter.get_categories() == sorted(EXPECTED_CATEGORIES)
+        assert any(
+            "falling back to built-in risk database" in str(item.message)
+            for item in caught
+        )
+
+    def test_reload_from_data_dir_raises_for_missing_explicit_path(
+        self, tmp_path
+    ):
+        """Explicit reload paths should fail fast when they do not exist."""
+        import pytest
+
+        hunter = SlangHunter()
+        with pytest.raises(FileNotFoundError):
+            hunter.reload_from_data_dir(tmp_path / "missing")
+
+    def test_from_data_dir_falls_back_for_empty_directory(self, tmp_path):
+        """Existing but empty directories should trigger fallback warning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            hunter = SlangHunter.from_data_dir(tmp_path)
+
+        assert hunter.get_categories() == sorted(EXPECTED_CATEGORIES)
+        assert any(
+            "No JSON knowledge base files found" in str(item.message)
+            for item in caught
+        )
+
+    def test_reload_from_data_dir_uses_default_directory_when_omitted(
+        self, monkeypatch, tmp_path
+    ):
+        """Reload should use the default data directory when no path is passed."""
+        (tmp_path / "drugs.json").write_text(
+            json.dumps(
+                {
+                    "keywords": ["ketamine"],
+                    "slang_patterns": ["k[e3]t[a@]m[i1]n[e3]"],
+                    "risk_threshold": {
+                        "min": 5.0,
+                        "max": 40.0,
+                        "description": "Reloaded range.",
+                    },
+                    "legal_reference": {
+                        "statute": "21 U.S.C. § 841",
+                        "name": "Controlled Substances Act",
+                        "summary": "Reload test.",
+                    },
+                    "jp_legal_reference": {
+                        "statute": "薬機法 Art. 84",
+                        "name": "Japanese statute",
+                        "summary": "Reload test.",
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            SlangHunter,
+            "_default_data_dir",
+            staticmethod(lambda: tmp_path),
+        )
+
+        hunter = SlangHunter()
+        hunter.reload_from_data_dir()
+
+        assert SlangHunter._default_data_dir() == tmp_path
+        assert hunter.get_categories() == ["drugs"]
+        assert hunter.get_category_info("drugs")["keyword_count"] == 1
+
+
+class TestPackageExports:
+    """Cover package-level export and version fallback behavior."""
+
+    def test_version_falls_back_when_package_metadata_is_missing(
+        self, monkeypatch
+    ):
+        """Editable-source execution should keep a stable fallback version."""
+        import importlib
+        import importlib.metadata as importlib_metadata
+        import src
+
+        original_version = importlib_metadata.version
+
+        def raise_not_found(_: str) -> str:
+            raise importlib_metadata.PackageNotFoundError
+
+        monkeypatch.setattr(importlib_metadata, "version", raise_not_found)
+        reloaded_src = importlib.reload(src)
+        assert reloaded_src.__version__ == "0.1.0"
+        assert "SlangHunter" in reloaded_src.__all__
+
+        monkeypatch.setattr(importlib_metadata, "version", original_version)
+        importlib.reload(src)
+
+
+class TestApiLayer:
+    """Exercise the FastAPI wrapper and Pydantic models."""
+
+    def test_analyze_request_rejects_whitespace_only_text(self):
+        """API model should reject payloads that are not meaningfully non-empty."""
+        import pytest
+        from pydantic import ValidationError
+
+        from api.models import AnalyzeRequest
+
+        with pytest.raises(ValidationError):
+            AnalyzeRequest(text="   ")
+
+    def test_health_endpoint_returns_status_and_version(self):
+        """Health endpoint should expose the deployment contract."""
+        from api.main import app, health
+
+        payload = health()
+
+        assert payload["status"] == "ok"
+        assert payload["version"]
+        assert app.title == "SlangHunter API"
+
+    def test_category_endpoints_return_data_and_404(self):
+        """Category metadata endpoint should expose known categories only."""
+        import pytest
+        from fastapi import HTTPException
+
+        from api.main import get_category, list_categories
+
+        categories_payload = list_categories()
+        detail_payload = get_category("drugs")
+
+        assert "drugs" in categories_payload["categories"]
+        assert detail_payload.keyword_count > 0
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_category("not-real")
+
+        assert exc_info.value.status_code == 404
+
+    def test_analyze_endpoint_returns_serialized_verdict(self):
+        """Analyze endpoint should map engine output into the response model."""
+        from api.main import analyze_listing
+        from api.models import AnalyzeRequest
+
+        response = analyze_listing(
+            AnalyzeRequest(text="Purple lean on ca$h app", price=20.0)
+        )
+
+        assert response.risk_level in {"CRITICAL", "WARNING", "SAFE"}
+        assert response.risk_emoji
+        assert response.risk_action
+        assert "drugs" in response.matched_categories
+
+    def test_analyze_endpoint_converts_engine_errors_to_http_400(
+        self, monkeypatch
+    ):
+        """Endpoint should translate engine validation errors into HTTP errors."""
+        import pytest
+        from fastapi import HTTPException
+
+        import api.main as api_main
+        from api.models import AnalyzeRequest
+
+        def raise_engine_error(text: str, price: float | None) -> dict[str, str]:
+            raise ValueError("boom")
+
+        monkeypatch.setattr(api_main.hunter, "analyze", raise_engine_error)
+
+        with pytest.raises(HTTPException) as exc_info:
+            api_main.analyze_listing(AnalyzeRequest(text="valid text", price=1.0))
+
+        assert exc_info.value.status_code == 400
+
+    def test_startup_logs_loaded_category_count(self, monkeypatch):
+        """Startup hook should log operational visibility details."""
+        import asyncio
+
+        import api.main as api_main
+
+        log_messages: list[tuple[str, int]] = []
+
+        def capture_info(message: str, category_count: int) -> None:
+            log_messages.append((message, category_count))
+
+        monkeypatch.setattr(api_main.LOGGER, "info", capture_info)
+        asyncio.run(api_main.log_startup())
+
+        assert log_messages
+        assert "SlangHunter API started" in log_messages[0][0]
+        assert log_messages[0][1] == len(api_main.hunter.get_categories())
+
+    def test_reload_endpoint_refreshes_module_level_hunter(
+        self, monkeypatch, tmp_path
+    ):
+        """Reload endpoint should repopulate the singleton from JSON files."""
+        import api.main as api_main
+
+        (tmp_path / "surikae.json").write_text(
+            json.dumps(
+                {
+                    "keywords": ["mirror quality"],
+                    "slang_patterns": ["\\bua\\b"],
+                    "risk_threshold": {
+                        "min": 30.0,
+                        "max": 250.0,
+                        "description": "Reloaded surikae range.",
+                    },
+                    "legal_reference": {
+                        "statute": "18 U.S.C. § 2320",
+                        "name": "Counterfeit Goods",
+                        "summary": "Reload test.",
+                    },
+                    "jp_legal_reference": {
+                        "statute": "不正競争防止法 Art. 2",
+                        "name": "Japanese counterfeit law",
+                        "summary": "Reload test.",
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            SlangHunter,
+            "_default_data_dir",
+            staticmethod(lambda: tmp_path),
+        )
+        api_main.hunter = SlangHunter()
+
+        response = api_main.reload_knowledge_base()
+
+        assert response == {
+            "status": "reloaded",
+            "categories": ["surikae"],
+        }
+        assert api_main.hunter.get_categories() == ["surikae"]
+
+
+# ==================================================================
+# 22. ML augmentation layer
+# ==================================================================
+
+class TestMLAugmentor:
+    """Validate the optional additive ML scoring layer."""
+
+    @staticmethod
+    def _build_augmentor():
+        """Train a default augmentor from the current knowledge base."""
+        from src.ml import TfidfAugmentor
+
+        hunter = SlangHunter()
+        return TfidfAugmentor.from_knowledge_base(hunter.risk_database)
+
+    def test_tfidf_augmentor_init_requires_sklearn(self, monkeypatch):
+        """Constructor should raise a helpful error when sklearn is unavailable."""
+        import builtins
+        import pytest
+
+        pytest.importorskip("sklearn")
+        from src.ml import TfidfAugmentor
+
+        original_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("sklearn"):
+                raise ImportError("mocked sklearn import failure")
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(ImportError, match="scikit-learn is required"):
+            TfidfAugmentor()
+
+    def test_tfidf_augmentor_from_knowledge_base_trains(self):
+        """Factory should return a fitted augmentor ready for scoring."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        augmentor = self._build_augmentor()
+
+        assert augmentor._is_fitted is True
+
+    def test_augment_no_rule_hits_capped_below_warning(self):
+        """No-rule cases must remain capped below the warning threshold."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        augmentor = self._build_augmentor()
+        result = augmentor.augment("buying kush now", 0.39, False)
+
+        assert result <= SlangHunter.THRESHOLD_WARNING - 0.01
+        assert result < SlangHunter.THRESHOLD_WARNING
+
+    def test_augment_with_rule_hits_can_exceed_warning(self):
+        """Rule-backed cases may cross warning when ML adds confidence."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        augmentor = self._build_augmentor()
+        result = augmentor.augment("buying kush now", 0.40, True)
+
+        assert result > SlangHunter.THRESHOLD_WARNING
+        assert result <= 0.40 + augmentor.MAX_BOOST
+
+    def test_analyze_enhanced_no_augmentor_returns_base(self):
+        """Without an augmentor, enhanced analysis must mirror base analysis."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        hunter = SlangHunter()
+        base_result = hunter.analyze("Selling some kush", price=25.0)
+        enhanced_result = hunter.analyze_enhanced("Selling some kush", price=25.0)
+
+        assert enhanced_result["risk_score"] == base_result["risk_score"]
+        assert enhanced_result["flags"] == base_result["flags"]
+        assert enhanced_result["reasoning"] == base_result["reasoning"]
+        assert (
+            enhanced_result["matched_categories"]
+            == base_result["matched_categories"]
+        )
+        assert enhanced_result["ml_augmented"] is False
+        assert enhanced_result["ml_confidence"] == 0.0
+        assert enhanced_result["ml_boosted_score"] == base_result["risk_score"]
+
+    def test_analyze_enhanced_with_augmentor_adds_ml_fields(self):
+        """Enhanced analysis should expose ML metadata alongside the verdict."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        hunter = SlangHunter()
+        augmentor = self._build_augmentor()
+        result = hunter.analyze_enhanced(
+            "buying kush now",
+            augmentor=augmentor,
+        )
+
+        assert result["ml_augmented"] is True
+        assert 0.0 <= result["ml_confidence"] <= 1.0
+        assert result["ml_boosted_score"] == result["risk_score"]
+        assert (
+            result["risk_score"]
+            >= hunter.analyze("buying kush now")["risk_score"]
+        )
+
+    def test_analyze_enhanced_critical_requires_rule_hits(self):
+        """ML alone must never escalate a clean listing to critical risk."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+
+        hunter = SlangHunter()
+        augmentor = self._build_augmentor()
+        result = hunter.analyze_enhanced(
+            "ordinary ceramic vase with floral pattern",
+            augmentor=augmentor,
+        )
+
+        assert result["flags"] == []
+        assert result["risk_score"] <= hunter.THRESHOLD_WARNING - 0.01
+        assert result["risk_score"] < hunter.THRESHOLD_CRITICAL
+
+    def test_score_augmentor_protocol_satisfied_by_tfidf(self):
+        """TfidfAugmentor should satisfy the runtime-checkable protocol."""
+        import pytest
+
+        pytest.importorskip("sklearn")
+        from src import ScoreAugmentor
+
+        augmentor = self._build_augmentor()
+
+        assert isinstance(augmentor, ScoreAugmentor)

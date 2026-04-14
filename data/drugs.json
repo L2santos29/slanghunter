@@ -1,0 +1,64 @@
+{
+  "keywords": [
+    "fentanyl",
+    "percocet",
+    "oxy",
+    "oxycontin",
+    "xanax",
+    "lean",
+    "codeine",
+    "tramadol",
+    "mdma",
+    "molly",
+    "ecstasy",
+    "adderall",
+    "meth",
+    "crystal",
+    "ice",
+    "speed",
+    "crack",
+    "kush",
+    "edibles",
+    "dab",
+    "wax",
+    "cart",
+    "carts",
+    "thc",
+    "shrooms",
+    "lsd",
+    "acid",
+    "dmt",
+    "plug",
+    "pack",
+    "gas",
+    "za",
+    "script",
+    "scripts",
+    "beans"
+  ],
+  "slang_patterns": [
+    "p[3e]rc[s0]?",
+    "m[\\s._]*[o0][\\s._]*l[\\s._]*l[\\s._]*y",
+    "x[\\s._]*[@a4][\\s._]*n[\\s._]*[@a4][\\s._]*x",
+    "f[3e]nt(?:anyl)?",
+    "[a4]dd[3e]r[a4]ll",
+    "[\\U0001F343\\U0001F4A8\\U0001F50C\\u26FD\\U0001F344]",
+    "[s$][\\s._]*h[\\s._]*r[\\s._]*[o0][\\s._]*[o0][\\s._]*m[\\s._]*[s$]?",
+    "[ck][\\s._]*r[\\s._]*[yi1][\\s._]*[s$][\\s._]*t[\\s._]*[a@][\\s._]*l"
+  ],
+  "risk_threshold": {
+    "min": 0.0,
+    "max": 80.0,
+    "description": "Street-level drug prices are typically under $80.  A listing in this range that also matches slang is highly suspicious."
+  },
+  "legal_reference": {
+    "statute": "21 U.S.C. § 841",
+    "name": "Controlled Substances Act — Prohibited Acts A",
+    "summary": "Unlawful to manufacture, distribute, or dispense a controlled substance."
+  },
+  "jp_legal_reference": {
+    "statute": "薬機法 Art. 84",
+    "name": "Act on Securing Quality, Efficacy and Safety of Pharmaceuticals",
+    "summary": "Prohibits illicit manufacture, sale, and distribution of narcotics and stimulants in Japan."
+  }
+}
